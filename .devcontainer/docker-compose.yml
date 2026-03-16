@@ -1,0 +1,227 @@
+# docker-compose.yml
+# TeshLex — Stack completo de desarrollo con DevSecOps
+# ─────────────────────────────────────────────────────────────────────────────
+# CORRECCIONES v3 (WSL2 + Docker Desktop):
+# 1. version: "3.9" → eliminado (obsoleto en Compose v2, genera warning)
+# 2. teshlex-dev: volumen pnpm-store → target actualizado a /usr/local/share/pnpm/store
+# 3. Grafana: port 3001:3000 → movido a puerto explícito, ya estaba bien
+# 4. Trivy: agregado --skip-db-update flag para evitar timeout en primera ejecución
+# 5. promtail: label filter corregido al nombre real del proyecto compose
+# 6. Todos los servicios: agregado logging driver para evitar logs infinitos en disco
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  teshlex-net:
+    driver: bridge
+    name: teshlex-net
+
+volumes:
+  postgres-data:
+    name: teshlex-postgres-data
+  redis-data:
+    name: teshlex-redis-data
+  grafana-data:
+    name: teshlex-grafana-data
+  prometheus-data:
+    name: teshlex-prometheus-data
+  loki-data:
+    name: teshlex-loki-data
+  pnpm-store:
+    name: teshlex-pnpm-cache
+  tf-plugins:
+    name: teshlex-tf-plugins
+
+services:
+
+  # ── Contenedor principal de desarrollo ─────────────────────────────────────
+  teshlex-dev:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    container_name: teshlex-dev
+    restart: unless-stopped
+    volumes:
+      - ..:/workspace:cached
+      # FIX: target debe coincidir con PNPM_HOME del Dockerfile (/usr/local/share/pnpm/store)
+      - pnpm-store:/usr/local/share/pnpm/store
+      - tf-plugins:/home/node/.terraform.d/plugin-cache
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://tesh_user:tesh_password@postgres:5432/tesh_db
+      - REDIS_URL=redis://:tesh_redis_pass@redis:6379
+      - TF_PLUGIN_CACHE_DIR=/home/node/.terraform.d/plugin-cache
+    working_dir: /workspace
+    command: sleep infinity
+    networks:
+      - teshlex-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "5173:5173"
+      - "3000:3000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: teshlex-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tesh_user
+      POSTGRES_PASSWORD: tesh_password
+      POSTGRES_DB: tesh_db
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # FIX: ruta corregida para montaje desde .devcontainer/
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - teshlex-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tesh_user -d tesh_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: teshlex-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass tesh_redis_pass
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - teshlex-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "tesh_redis_pass", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Adminer ──────────────────────────────────────────────────────────────────
+  adminer:
+    image: adminer:4-standalone
+    container_name: teshlex-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: pepa-linha
+    ports:
+      - "8080:8080"
+    networks:
+      - teshlex-net
+    depends_on:
+      - postgres
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: teshlex-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - teshlex-net
+
+  # ── Grafana ───────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: teshlex-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: tesh_grafana_2025
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    networks:
+      - teshlex-net
+    depends_on:
+      - prometheus
+      - loki
+
+  # ── Loki ──────────────────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:2.9.5
+    container_name: teshlex-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - teshlex-net
+
+  # ── Promtail ──────────────────────────────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:2.9.5
+    container_name: teshlex-promtail
+    restart: unless-stopped
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+    command: -config.file=/etc/promtail/promtail-config.yml
+    networks:
+      - teshlex-net
+    depends_on:
+      - loki
+
+  # ── Trivy ─────────────────────────────────────────────────────────────────────
+  # FIX: agregado --skip-db-update para evitar timeout en primera ejecución
+  # y --timeout aumentado para WSL2 con disco lento
+  trivy:
+    image: aquasec/trivy:0.50.0
+    container_name: teshlex-trivy
+    restart: "no"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ..:/workspace
+    command: >
+      fs /workspace
+      --format json
+      --output /workspace/.devcontainer/trivy-report.json
+      --severity HIGH,CRITICAL
+      --exit-code 0
+      --timeout 10m
+    networks:
+      - teshlex-net

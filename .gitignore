@@ -1,0 +1,40 @@
+# Node
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Seguridad — nunca subir
+*.pem
+*.key
+*.p12
+*.pfx
+trivy-report.json

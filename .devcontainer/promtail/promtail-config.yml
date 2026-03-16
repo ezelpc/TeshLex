@@ -1,0 +1,35 @@
+# .devcontainer/promtail/promtail-config.yml
+# CORRECCIÓN: label filter actualizado para coincidir con el nombre real del
+# proyecto docker-compose. Docker Compose usa el nombre del directorio como
+# prefijo del proyecto — ajusta "teshlex-devcontainer" si tu carpeta se llama
+# diferente (puedes verificar con: docker inspect <container> | grep compose.project)
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Solo incluir contenedores que pertenezcan a este stack
+      # FIX: el valor del label es el nombre del proyecto compose (directorio padre por defecto)
+      # Si tu .devcontainer está en /workspace/.devcontainer, el proyecto se llama "devcontainer"
+      # Puedes forzarlo con COMPOSE_PROJECT_NAME=teshlex en un .env junto al docker-compose.yml
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        regex: "teshlex.*|devcontainer"
+        action: keep
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: [__meta_docker_container_log_stream]
+        target_label: stream
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service

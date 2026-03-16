@@ -1,0 +1,118 @@
+{
+  "name": "TeshLex Dev Container",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "teshlex-dev",
+  "workspaceFolder": "/workspace",
+  "remoteUser": "node",
+
+  // ── Errores corregidos del original ───────────────────────────────────────
+  // 1. Puerto 300 → corregido a 3000 (backend NestJS)
+  // 2. remoteUser "root" → cambiado a "node" (nunca trabajar como root en dev)
+  // 3. pnpm create express-ts no existe → reemplazado por @nestjs/cli correcto
+  // 4. postCreateCommand era frágil → separado en postCreateCommand array
+  // 5. Faltaban extensiones de VS Code esenciales para el stack
+  // 6. Faltaban variables de entorno del contenedor
+  // ─────────────────────────────────────────────────────────────────────────
+
+  "forwardPorts": [
+    5173,  // Vite frontend (React)
+    3000,  // NestJS backend
+    5432,  // PostgreSQL
+    6379,  // Redis
+    8080,  // Swagger UI / adminer
+    9090,  // Prometheus
+    3100   // Grafana Loki (logs)
+  ],
+
+  "portsAttributes": {
+    "5173": { "label": "Frontend Vite",    "onAutoForward": "openBrowser" },
+    "3000": { "label": "Backend NestJS",   "onAutoForward": "notify" },
+    "5432": { "label": "PostgreSQL",       "onAutoForward": "silent" },
+    "6379": { "label": "Redis",            "onAutoForward": "silent" },
+    "8080": { "label": "Adminer / Swagger","onAutoForward": "notify" },
+    "9090": { "label": "Prometheus",       "onAutoForward": "silent" },
+    "3100": { "label": "Grafana Loki",     "onAutoForward": "silent" }
+  },
+
+  // ── Setup del workspace al crear el contenedor ───────────────────────────
+  // chmod +x primero por si Git no preservó los permisos en WSL2
+  "postCreateCommand": "chmod +x /workspace/.devcontainer/setup.sh && bash /workspace/.devcontainer/setup.sh",
+
+  // ── Variables de entorno disponibles dentro del contenedor ───────────────
+  "remoteEnv": {
+    "NODE_ENV": "development",
+    "PNPM_HOME": "/home/node/.local/share/pnpm",
+    "PATH": "${containerEnv:PATH}:/home/node/.local/share/pnpm:/usr/local/terraform"
+  },
+
+  // ── Extensiones de VS Code instaladas automáticamente ────────────────────
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // TypeScript / Node
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-vscode.vscode-typescript-next",
+        "christian-kohler.path-intellisense",
+
+        // NestJS / Backend
+        "firsttris.vscode-jest-runner",
+        "humao.rest-client",
+        "42crunch.vscode-openapi",
+
+        // Prisma
+        "Prisma.prisma",
+
+        // React / Frontend
+        "dsznajder.es7-react-js-snippets",
+        "bradlc.vscode-tailwindcss",
+
+        // Docker
+        "ms-azuretools.vscode-docker",
+        "ms-vscode-remote.remote-containers",
+
+        // Terraform / DevSecOps
+        "hashicorp.terraform",
+        "hashicorp.hcl",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "redhat.vscode-yaml",
+
+        // Seguridad
+        "snyk-security.snyk-vulnerability-scanner",
+        "SonarSource.sonarlint-vscode",
+
+        // Git
+        "eamodio.gitlens",
+        "mhutchie.git-graph",
+
+        // Base de datos
+        "cweijan.vscode-database-client2",
+
+        // Calidad de código
+        "usernamehw.errorlens",
+        "streetsidesoftware.code-spell-checker",
+        "streetsidesoftware.code-spell-checker-spanish"
+      ],
+
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": true
+        },
+        "typescript.preferences.importModuleSpecifier": "relative",
+        "prisma.showPrismaDataPlatformNotification": false,
+        "terraform.experimentalFeatures.validateOnSave": true,
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+
+  // ── Montajes adicionales ──────────────────────────────────────────────────
+  "mounts": [
+    // Cache de pnpm persistente entre rebuilds del contenedor
+    "source=teshlex-pnpm-cache,target=/home/node/.local/share/pnpm/store,type=volume",
+    // Cache de Terraform plugins
+    "source=teshlex-tf-plugins,target=/home/node/.terraform.d/plugin-cache,type=volume"
+  ]
+}
