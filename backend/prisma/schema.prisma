@@ -1,13 +1,505 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// prisma/schema.prisma
+// TeshLex — Esquema de base de datos
+// Compatible con Prisma 7+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAMBIO PRISMA 7: La propiedad `url` se eliminó del datasource.
+// La conexión ahora se configura en prisma.config.ts (raíz del proyecto)
+// ─────────────────────────────────────────────────────────────────────────────
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
 }
 
+// En Prisma 7 el datasource NO lleva url ni directUrl
+// La conexión viene del adapter definido en prisma.config.ts
 datasource db {
   provider = "postgresql"
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENUMS
+// ══════════════════════════════════════════════════════════════════════════════
+
+enum Role {
+  STUDENT
+  TEACHER
+  ADMIN
+  SUPERADMIN
+}
+
+enum LanguageLevel {
+  A1
+  A2
+  B1
+  B2
+  C1
+  C2
+}
+
+enum CourseModality {
+  WEEKDAY
+  SATURDAY
+}
+
+enum CourseStatus {
+  DRAFT
+  ACTIVE
+  FULL
+  FINISHED
+  CANCELLED
+}
+
+enum EnrollmentStatus {
+  PENDING_PAYMENT
+  ACTIVE
+  COMPLETED
+  DROPPED
+  EXPELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REFUNDED
+  IN_PROCESS
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentType {
+  ENROLLMENT_FEE
+  MONTHLY_FEE
+  MATERIAL_FEE
+  CERTIFICATION
+  LATE_FEE
+}
+
+enum DocumentType {
+  BOLETA
+  CERTIFICATE
+  CONSTANCY
+}
+
+enum DocumentStatus {
+  PENDING
+  RELEASED
+  REJECTED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SYSTEM
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_LOGOUT
+  USER_PASSWORD_CHANGED
+  USER_CREATED
+  USER_UPDATED
+  USER_DEACTIVATED
+  COURSE_CREATED
+  COURSE_UPDATED
+  COURSE_CANCELLED
+  ENROLLMENT_CREATED
+  ENROLLMENT_ACTIVATED
+  ENROLLMENT_DROPPED
+  ENROLLMENT_EXPELLED
+  ENROLLMENT_COMPLETED
+  GRADES_SAVED
+  PAYMENT_CREATED
+  PAYMENT_APPROVED
+  PAYMENT_REJECTED
+  PAYMENT_REFUNDED
+  DOCUMENT_RELEASED
+  DOCUMENT_REJECTED
+  CONFIG_UPDATED
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// USUARIOS
+// ══════════════════════════════════════════════════════════════════════════════
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique @db.VarChar(255)
+  password      String    @db.VarChar(255)
+  role          Role      @default(STUDENT)
+  isActive      Boolean   @default(true)
+  emailVerified Boolean   @default(false)
+  firstName     String    @db.VarChar(100)
+  lastName      String    @db.VarChar(150)
+  curp          String?   @unique @db.VarChar(18)
+  phone         String?   @db.VarChar(15)
+  birthDate     DateTime? @db.Date
+  avatarUrl     String?   @db.VarChar(500)
+  lastLoginAt   DateTime?
+  lastLoginIp   String?   @db.VarChar(45)
+
+  studentProfile StudentProfile?
+  teacherProfile TeacherProfile?
+  refreshTokens  RefreshToken[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([role, isActive])
+  @@index([firstName, lastName])
+  @@map("users")
+}
+
+model StudentProfile {
+  id        String @id @default(uuid()) @db.Uuid
+  userId    String @unique @db.Uuid
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matricula String @unique @db.VarChar(20)
+  curp      String? @db.VarChar(18)
+  career    String @db.VarChar(150)
+  semester  Int
+
+  enrollments Enrollment[]
+  payments    Payment[]
+  documents   Document[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([matricula])
+  @@map("student_profiles")
+}
+
+model TeacherProfile {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @unique @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specialties String[]
+  bio         String?  @db.Text
+  maxStudents Int      @default(35)
+
+  courses  Course[]
+  grades   Grade[]
+  comments TeacherComment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("teacher_profiles")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN DEL SISTEMA
+// ══════════════════════════════════════════════════════════════════════════════
+
+model SystemConfig {
+  id        String  @id @default(uuid()) @db.Uuid
+  key       String  @unique @db.VarChar(100)
+  value     String  @db.Text
+  type      String  @db.VarChar(20)
+  label     String  @db.VarChar(200)
+  updatedBy String? @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_config")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// IDIOMAS, CICLOS Y CURSOS
+// ══════════════════════════════════════════════════════════════════════════════
+
+model Language {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String  @unique @db.VarChar(80)
+  code     String  @unique @db.VarChar(5)
+  isActive Boolean @default(true)
+  courses  Course[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("languages")
+}
+
+model SchoolCycle {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique @db.VarChar(100)
+  code      String   @unique @db.VarChar(20)
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  isActive  Boolean  @default(false)
+  courses   Course[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("school_cycles")
+}
+
+model Course {
+  id                  String         @id @default(uuid()) @db.Uuid
+  languageId          String         @db.Uuid
+  language            Language       @relation(fields: [languageId], references: [id])
+  level               LanguageLevel
+  modality            CourseModality
+  status              CourseStatus   @default(DRAFT)
+  cycleId             String?        @db.Uuid
+  cycle               SchoolCycle?   @relation(fields: [cycleId], references: [id])
+  scheduleDescription String         @db.VarChar(200)
+  startTime           String         @db.VarChar(5)
+  endTime             String         @db.VarChar(5)
+  startDate           DateTime       @db.Date
+  endDate             DateTime       @db.Date
+  daysOfWeek          Int[]
+  maxStudents         Int            @default(35)
+  currentStudents     Int            @default(0)
+  enrollmentFee       Decimal        @default(1500.00) @db.Decimal(10, 2)
+  monthlyFee          Decimal        @default(0.00)    @db.Decimal(10, 2)
+  materialFee         Decimal        @default(0.00)    @db.Decimal(10, 2)
+  teacherId           String?        @db.Uuid
+  teacher             TeacherProfile? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+  description         String?        @db.Text
+  notes               String?        @db.Text
+
+  evaluationCriteria EvaluationCriteria[]
+  enrollments        Enrollment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([languageId, level, status])
+  @@index([teacherId, status])
+  @@index([cycleId])
+  @@map("courses")
+}
+
+model EvaluationCriteria {
+  id          String  @id @default(uuid()) @db.Uuid
+  courseId    String  @db.Uuid
+  course      Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  name        String  @db.VarChar(100)
+  percentage  Int
+  description String? @db.VarChar(300)
+  order       Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([courseId, name])
+  @@index([courseId])
+  @@map("evaluation_criteria")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INSCRIPCIONES
+// ══════════════════════════════════════════════════════════════════════════════
+
+model Enrollment {
+  id              String           @id @default(uuid()) @db.Uuid
+  studentId       String           @db.Uuid
+  student         StudentProfile   @relation(fields: [studentId], references: [id])
+  courseId        String           @db.Uuid
+  course          Course           @relation(fields: [courseId], references: [id])
+  status          EnrollmentStatus @default(PENDING_PAYMENT)
+  isPreEnrollment Boolean          @default(false)
+  preEnrolledAt   DateTime?
+  enrolledAt      DateTime?
+  completedAt     DateTime?
+  droppedAt       DateTime?
+  dropReason      String?          @db.VarChar(500)
+
+  grades      Grade?
+  attendances Attendance[]
+  payments    Payment[]
+  document    Document?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([studentId, courseId])
+  @@index([courseId, status])
+  @@index([studentId, status])
+  @@index([status, createdAt])
+  @@map("enrollments")
+}
+
+model Grade {
+  id             String         @id @default(uuid()) @db.Uuid
+  enrollmentId   String         @unique @db.Uuid
+  enrollment     Enrollment     @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  teacherId      String         @db.Uuid
+  teacher        TeacherProfile @relation(fields: [teacherId], references: [id])
+  criteriaGrades Json
+  finalGrade     Decimal?       @db.Decimal(4, 2)
+  passed         Boolean?
+  observations   String?        @db.Text
+
+  gradedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teacherId])
+  @@index([passed])
+  @@map("grades")
+}
+
+model Attendance {
+  id           String     @id @default(uuid()) @db.Uuid
+  enrollmentId String     @db.Uuid
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  date         DateTime   @db.Date
+  present      Boolean
+  notes        String?    @db.VarChar(300)
+
+  @@unique([enrollmentId, date])
+  @@index([enrollmentId, date])
+  @@map("attendances")
+}
+
+model TeacherComment {
+  id        String         @id @default(uuid()) @db.Uuid
+  teacherId String         @db.Uuid
+  teacher   TeacherProfile @relation(fields: [teacherId], references: [id])
+  message   String         @db.Text
+  isRead    Boolean        @default(false)
+  readAt    DateTime?
+  readById  String?        @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  @@index([teacherId])
+  @@index([isRead, createdAt])
+  @@map("teacher_comments")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PAGOS
+// ══════════════════════════════════════════════════════════════════════════════
+
+model Payment {
+  id                String         @id @default(uuid()) @db.Uuid
+  studentId         String         @db.Uuid
+  student           StudentProfile @relation(fields: [studentId], references: [id])
+  enrollmentId      String?        @db.Uuid
+  enrollment        Enrollment?    @relation(fields: [enrollmentId], references: [id])
+  type              PaymentType
+  status            PaymentStatus  @default(PENDING)
+  amount            Decimal        @db.Decimal(10, 2)
+  currency          String         @default("MXN") @db.VarChar(3)
+  tax               Decimal        @default(0.00) @db.Decimal(10, 2)
+  mpPreferenceId    String?        @unique @db.VarChar(100)
+  mpPaymentId       String?        @unique @db.VarChar(50)
+  mpStatus          String?        @db.VarChar(50)
+  mpStatusDetail    String?        @db.VarChar(100)
+  mpPaymentMethod   String?        @db.VarChar(50)
+  mpExternalRef     String?        @unique @db.VarChar(100)
+  description       String?        @db.VarChar(300)
+  metadata          Json?
+  receiptUrl        String?        @db.VarChar(500)
+  refundedAt        DateTime?
+  refundReason      String?        @db.VarChar(500)
+  refundAmount      Decimal?       @db.Decimal(10, 2)
+  webhookReceivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId, status])
+  @@index([enrollmentId])
+  @@index([mpPaymentId])
+  @@index([status, createdAt])
+  @@map("payments")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DOCUMENTOS
+// ══════════════════════════════════════════════════════════════════════════════
+
+model Document {
+  id           String         @id @default(uuid()) @db.Uuid
+  studentId    String         @db.Uuid
+  student      StudentProfile @relation(fields: [studentId], references: [id])
+  enrollmentId String?        @unique @db.Uuid
+  enrollment   Enrollment?    @relation(fields: [enrollmentId], references: [id])
+  type         DocumentType
+  status       DocumentStatus @default(PENDING)
+  fileUrl      String?        @db.VarChar(500)
+  releasedAt   DateTime?
+  releasedById String?        @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId, status])
+  @@index([status, type])
+  @@map("documents")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NOTIFICACIONES Y AUDITORÍA
+// ══════════════════════════════════════════════════════════════════════════════
+
+model Notification {
+  id         String              @id @default(uuid()) @db.Uuid
+  userId     String              @db.Uuid
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel    NotificationChannel
+  subject    String              @db.VarChar(200)
+  body       String              @db.Text
+  isRead     Boolean             @default(false)
+  readAt     DateTime?
+  sentAt     DateTime?
+  entityType String?             @db.VarChar(50)
+  entityId   String?             @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String?     @db.Uuid
+  user      User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    AuditAction
+  entity    String      @db.VarChar(60)
+  entityId  String?     @db.Uuid
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?     @db.VarChar(45)
+  userAgent String?     @db.VarChar(300)
+
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AUTH
+// ══════════════════════════════════════════════════════════════════════════════
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique @db.VarChar(500)
+  expiresAt DateTime
+  revokedAt DateTime?
+  ipAddress String?   @db.VarChar(45)
+  userAgent String?   @db.VarChar(300)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
 }
