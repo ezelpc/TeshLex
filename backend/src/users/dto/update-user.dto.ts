@@ -1,6 +1,11 @@
 // src/users/dto/update-user.dto.ts
-import { IsString, IsOptional, IsBoolean, IsUrl, MaxLength } from 'class-validator'
-import { ApiPropertyOptional } from '@nestjs/swagger'
+import {
+  IsString, IsOptional, IsBoolean, IsUrl,
+  MaxLength, MinLength,
+} from 'class-validator'
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export class UpdateUserDto {
   @ApiPropertyOptional({ example: 'Juan' })
@@ -29,11 +34,8 @@ export class UpdateUserDto {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-
-// src/users/dto/update-user-admin.dto.ts
 // Solo admin puede cambiar isActive
-import { IsBoolean, IsOptional } from 'class-validator'
-import { ApiPropertyOptional }   from '@nestjs/swagger'
+// ─────────────────────────────────────────────────────────────────────────────
 
 export class UpdateUserAdminDto extends UpdateUserDto {
   @ApiPropertyOptional({ example: false, description: 'Activar o desactivar la cuenta' })
@@ -43,10 +45,6 @@ export class UpdateUserAdminDto extends UpdateUserDto {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-
-// src/users/dto/teacher-comment.dto.ts
-import { IsString, MinLength, MaxLength } from 'class-validator'
-import { ApiProperty } from '@nestjs/swagger'
 
 export class TeacherCommentDto {
   @ApiProperty({ example: 'Se requiere más material audiovisual para el nivel B1.' })
