@@ -4,4 +4,7 @@ import vike from 'vike/plugin'
 
 export default defineConfig({
   plugins: [vike(), react()],
+  server: { port: 5000 },
+  preview: { port: 5000 },
 })
+
