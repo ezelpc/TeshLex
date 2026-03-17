@@ -1,79 +1,58 @@
+// src/pages/olvide-contrasena/+Page.tsx
 import '../../index.css'
-import { useState } from 'react'
 
 export default function OlvideContrasenaPage() {
-  const [email, setEmail] = useState('')
-  const [enviado, setEnviado] = useState(false)
-  const [error, setError] = useState('')
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-gray-100 flex items-center justify-center px-4">
+      <div className="bg-white rounded-2xl shadow-lg w-full max-w-md p-8 text-center">
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!email) {
-      setError('Por favor ingresa tu correo electronico.')
-      return
-    }
-    setError('')
-    setEnviado(true)
-  }
+        {/* Icon */}
+        <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-100 rounded-full mb-4">
+          <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+        </div>
 
-  if (enviado) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
-        <div className="bg-white rounded-xl shadow-md w-full max-w-md p-8 text-center">
-          <div className="flex justify-center mb-4">
-            <div className="w-16 h-16 rounded-full border-4 border-green-500 flex items-center justify-center">
-              <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">Recuperar Contraseña</h1>
+        <p className="text-gray-500 text-sm mb-8 leading-relaxed">
+          Para recuperar tu contraseña, comunícate directamente con el área de Administración del TESH.
+        </p>
+
+        {/* Contact card */}
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 text-left space-y-3 mb-8">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">📧</span>
+            <div>
+              <p className="text-xs text-gray-500 font-medium">Correo Electrónico</p>
+              <a href="mailto:lenguas@tesh.edu.mx" className="text-sm font-bold text-green-700 hover:underline">
+                lenguas@tesh.edu.mx
+              </a>
             </div>
           </div>
-          <h2 className="text-xl font-bold text-green-700 mb-2">Correo Enviado</h2>
-          <p className="text-gray-500 text-sm mb-6">
-            Hemos enviado instrucciones de recuperacion a {email}. Revisa tu bandeja de entrada.
-          </p>
-          <a href="/login" className="block w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition-colors">
-            Ir a Iniciar Sesion
-          </a>
+          <div className="flex items-center gap-3">
+            <span className="text-xl">📞</span>
+            <div>
+              <p className="text-xs text-gray-500 font-medium">Teléfono</p>
+              <a href="tel:5558111234" className="text-sm font-bold text-green-700 hover:underline">
+                (55) 5811-1234
+              </a>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xl">🕐</span>
+            <div>
+              <p className="text-xs text-gray-500 font-medium">Horario de Atención</p>
+              <p className="text-sm font-bold text-gray-700">Lunes–Viernes 8:00–17:00</p>
+            </div>
+          </div>
         </div>
-      </div>
-    )
-  }
 
-  return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
-      <div className="bg-white rounded-xl shadow-md w-full max-w-md p-8">
-        <h1 className="text-2xl font-bold text-center text-green-700 mb-2">
-          Olvide mi Contrasena
-        </h1>
-        <p className="text-center text-gray-500 text-sm mb-6">
-          Ingresa tu correo y te enviaremos instrucciones para recuperar tu acceso.
-        </p>
-
-        {error && (
-          <p className="text-red-500 text-sm text-center mb-4">{error}</p>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="email"
-            placeholder="Correo Electronico"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-          />
-          <button
-            type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition-colors"
-          >
-            Enviar Instrucciones
-          </button>
-        </form>
-
-        <p className="text-center mt-4">
-          <a href="/login" className="text-gray-500 text-sm hover:underline">
-            Volver al Login
-          </a>
-        </p>
+        <a
+          href="/login"
+          className="block w-full bg-green-700 hover:bg-green-800 text-white font-semibold py-3 rounded-lg transition-colors"
+        >
+          Volver al Inicio de Sesión
+        </a>
       </div>
     </div>
   )

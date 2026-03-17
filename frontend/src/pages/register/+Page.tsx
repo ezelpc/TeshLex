@@ -1,127 +1,165 @@
+// src/pages/register/+Page.tsx
+import { useState }      from 'react'
 import '../../index.css'
-import { useState } from 'react'
+import { api, ApiError } from '../../lib/api'
+import { ButtonSpinner } from '../../components/LoadingSpinner'
+import { ErrorBanner }   from '../../components/ErrorBanner'
+
+const CAREERS = [
+  'Ing. en Sistemas Computacionales',
+  'Ing. Industrial',
+  'Ing. en Mecatrónica',
+  'Ing. en Electrónica',
+  'Ing. en Administración',
+  'Lic. en Administración',
+  'Lic. en Contaduría',
+  'Otra',
+]
 
 export default function RegisterPage() {
   const [form, setForm] = useState({
-    nombre: '',
-    matricula: '',
-    curp: '',
-    carrera: '',
-    semestre: '',
-    fechaNacimiento: '',
-    email: '',
-    telefono: '',
+    firstName:  '',
+    lastName:   '',
+    matricula:  '',
+    career:     '',
+    semester:   '',
+    email:      '',
+    password:   '',
+    phone:      '',
   })
-  const [error, setError] = useState('')
+  const [error,   setError]   = useState('')
+  const [loading, setLoading] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const set = (field: keyof typeof form) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+      setForm(f => ({ ...f, [field]: e.target.value }))
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const vacios = Object.values(form).some(v => v === '')
-    if (vacios) {
-      setError('Por favor completa todos los campos.')
+    const { firstName, lastName, matricula, career, semester, email, password } = form
+    if (!firstName || !lastName || !matricula || !career || !semester || !email || !password) {
+      setError('Por favor completa todos los campos obligatorios.')
       return
     }
+    if (password.length < 8) {
+      setError('La contraseña debe tener al menos 8 caracteres.')
+      return
+    }
+
     setError('')
-    // Aquí irá la conexión al backend
-    alert('Registro exitoso (simulación)')
+    setLoading(true)
+    try {
+      // 1. Registrar alumno
+      await api.users.registerStudent({
+        firstName,
+        lastName,
+        email,
+        password,
+        matricula,
+        career,
+        semester: parseInt(semester, 10),
+        phone: form.phone || undefined,
+      })
+
+      // 2. Login automático para obtener JWT
+      await api.auth.login(email, password)
+
+      // 3. Redirigir al pago (el alumno elegirá su curso en ese paso)
+      window.location.href = '/dashboard-alumno'
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message)
+      } else {
+        setError('Error de conexión. Intenta de nuevo.')
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const inputClass = "w-full border border-gray-300 rounded-lg px-4 py-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+  const inputClass =
+    'w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100 transition-colors'
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4 py-10">
-      <div className="bg-white rounded-xl shadow-md w-full max-w-md p-8">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-gray-100 flex items-center justify-center px-4 py-10">
+      <div className="bg-white rounded-2xl shadow-lg w-full max-w-md p-8">
 
-        <h1 className="text-2xl font-bold text-center text-green-700 mb-6">
-          Registro - Datos Personales
-        </h1>
+        <div className="text-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-800">Registro de Alumno</h1>
+          <p className="text-gray-500 text-sm mt-1">TESH — Cursos de Idiomas</p>
+        </div>
 
         {error && (
-          <p className="text-red-500 text-sm text-center mb-4">{error}</p>
+          <div className="mb-4">
+            <ErrorBanner message={error} onClose={() => setError('')} />
+          </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="text"
-            placeholder="Nombre Completo (Empezando por Apellidos)"
-            value={form.nombre}
-            onChange={e => setForm({ ...form, nombre: e.target.value })}
-            className={inputClass}
-          />
-          <input
-            type="text"
-            placeholder="Matrícula TESH"
-            value={form.matricula}
-            onChange={e => setForm({ ...form, matricula: e.target.value })}
-            className={inputClass}
-          />
-          <input
-            type="text"
-            placeholder="CURP"
-            value={form.curp}
-            onChange={e => setForm({ ...form, curp: e.target.value })}
-            className={inputClass}
-          />
-          <input
-            type="text"
-            placeholder="Carrera (Ej: Ing. en Sistemas)"
-            value={form.carrera}
-            onChange={e => setForm({ ...form, carrera: e.target.value })}
-            className={inputClass}
-          />
+        <form onSubmit={handleSubmit} className="space-y-3" noValidate>
 
-          <select
-            value={form.semestre}
-            onChange={e => setForm({ ...form, semestre: e.target.value })}
-            className={`${inputClass} text-gray-500 bg-white`}
-          >
-            <option value="">Seleccione Semestre</option>
-            {['1ro', '2do', '3ro', '4to', '5to', '6to', '7mo', '8vo'].map(s => (
-              <option key={s} value={s}>{s} Semestre</option>
-            ))}
-          </select>
-
-          <div>
-            <label className="block text-sm text-blue-600 mb-1">
-              Fecha de Nacimiento:
-            </label>
-            <input
-              type="date"
-              value={form.fechaNacimiento}
-              onChange={e => setForm({ ...form, fechaNacimiento: e.target.value })}
-              className={inputClass}
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="firstName" className="block text-xs font-medium text-gray-600 mb-1">Nombre(s) *</label>
+              <input id="firstName" type="text" value={form.firstName} onChange={set('firstName')} className={inputClass} placeholder="Juan" required />
+            </div>
+            <div>
+              <label htmlFor="lastName" className="block text-xs font-medium text-gray-600 mb-1">Apellidos *</label>
+              <input id="lastName" type="text" value={form.lastName} onChange={set('lastName')} className={inputClass} placeholder="Velásquez Torres" required />
+            </div>
           </div>
 
-          <input
-            type="email"
-            placeholder="Email de Contacto Personal"
-            value={form.email}
-            onChange={e => setForm({ ...form, email: e.target.value })}
-            className={inputClass}
-          />
-          <input
-            type="tel"
-            placeholder="Teléfono de Contacto"
-            value={form.telefono}
-            onChange={e => setForm({ ...form, telefono: e.target.value })}
-            className={inputClass}
-          />
+          <div>
+            <label htmlFor="matricula" className="block text-xs font-medium text-gray-600 mb-1">Matrícula TESH *</label>
+            <input id="matricula" type="text" value={form.matricula} onChange={set('matricula')} className={inputClass} placeholder="2021123456" required />
+          </div>
+
+          <div>
+            <label htmlFor="career" className="block text-xs font-medium text-gray-600 mb-1">Carrera *</label>
+            <select id="career" value={form.career} onChange={set('career')} className={`${inputClass} bg-white text-gray-700`} required>
+              <option value="">Selecciona tu carrera</option>
+              {CAREERS.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="semester" className="block text-xs font-medium text-gray-600 mb-1">Semestre actual *</label>
+            <select id="semester" value={form.semester} onChange={set('semester')} className={`${inputClass} bg-white text-gray-700`} required>
+              <option value="">Selecciona semestre</option>
+              {[1,2,3,4,5,6,7,8,9,10].map(n => <option key={n} value={n}>{n}° Semestre</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="email" className="block text-xs font-medium text-gray-600 mb-1">Email *</label>
+            <input id="email" type="email" value={form.email} onChange={set('email')} className={inputClass} placeholder="juan.velasquez@tesh.edu.mx" required autoComplete="email" />
+          </div>
+
+          <div>
+            <label htmlFor="password" className="block text-xs font-medium text-gray-600 mb-1">Contraseña * (mín. 8 caracteres)</label>
+            <input id="password" type="password" value={form.password} onChange={set('password')} className={inputClass} placeholder="••••••••" required autoComplete="new-password" />
+          </div>
+
+          <div>
+            <label htmlFor="phone" className="block text-xs font-medium text-gray-600 mb-1">Teléfono (opcional)</label>
+            <input id="phone" type="tel" value={form.phone} onChange={set('phone')} className={inputClass} placeholder="5512345678" />
+          </div>
 
           <button
             type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition-colors"
+            disabled={loading}
+            aria-busy={loading}
+            className="w-full bg-green-700 hover:bg-green-800 disabled:opacity-60 text-white font-semibold py-3 rounded-lg transition-colors flex items-center justify-center mt-2"
           >
-            Continuar
+            {loading && <ButtonSpinner />}
+            {loading ? 'Registrando...' : 'Crear Cuenta'}
           </button>
         </form>
 
         <p className="text-center mt-4">
           <a href="/login" className="text-gray-500 text-sm hover:underline">
-            Cancelar y Volver
+            ¿Ya tienes cuenta? Inicia sesión
           </a>
         </p>
-
       </div>
     </div>
   )
