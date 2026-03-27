@@ -1,4 +1,5 @@
 // src/main.ts
+import './dns-fix'
 import { NestFactory }    from '@nestjs/core'
 import { ValidationPipe, Logger } from '@nestjs/common'
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger'
@@ -9,6 +10,7 @@ import compression = require('compression')
 import { AppModule }      from './app.module'
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
 import { TransformInterceptor }  from './common/interceptors/transform.interceptor'
+import * as express from 'express'
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap')
@@ -21,6 +23,7 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api')
 
+
   app.use(helmet({ crossOriginEmbedderPolicy: false }))
   app.enableCors({
     origin:         origins.split(',').map((o: string) => o.trim()),
@@ -28,6 +31,7 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials:    true,
   })
+
   app.use(compression())
 
   app.useGlobalPipes(new ValidationPipe({

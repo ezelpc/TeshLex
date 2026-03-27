@@ -1,22 +1,9 @@
 // src/payments/dto/webhook.dto.ts
-import { IsString, IsOptional, ValidateNested } from 'class-validator'
-import { Type } from 'class-transformer'
-
-export class WebhookDataDto {
-  @IsString()
-  id: string
-}
+import { ApiProperty } from '@nestjs/swagger'
+import { IsOptional } from 'class-validator'
 
 export class WebhookDto {
-  @IsString()
+  @ApiProperty({ required: false, description: 'Stripe enviará el body raw' })
   @IsOptional()
-  id?: string
-
-  @IsString()
-  type: string
-
-  @ValidateNested()
-  @Type(() => WebhookDataDto)
-  @IsOptional()
-  data?: WebhookDataDto
+  type?: string
 }

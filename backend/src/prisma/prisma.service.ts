@@ -1,10 +1,11 @@
 // src/prisma/prisma.service.ts
-// Prisma 7 — Servicio singleton con adapter PrismaPg
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { PrismaClient }  from '@prisma/client'
 import { PrismaPg }      from '@prisma/adapter-pg'
 import { Pool }          from 'pg'
+
+import { execSync } from 'child_process'
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -12,14 +13,20 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private readonly pgPool: Pool
 
   constructor(private readonly config: ConfigService) {
-    const connectionString = config.getOrThrow<string>('DATABASE_URL')
-
-    // Cast explícito para resolver conflicto entre versiones de @types/pg
+    let connectionString = config.getOrThrow<string>('DATABASE_URL')
+    if (connectionString.includes('@postgres:')) {
+      try {
+        const ip = execSync("getent hosts postgres | awk '{print $1}'").toString().trim()
+        if (ip) {
+          connectionString = connectionString.replace('@postgres:', `@${ip}:`)
+        }
+      } catch (e) {
+        // Fallback or ignore
+      }
+    }
     const pool    = new Pool({ connectionString })
     const adapter = new PrismaPg(pool as any)
-
     super({ adapter })
-
     this.pgPool = pool
   }
 

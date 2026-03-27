@@ -9,18 +9,20 @@ import { ErrorBanner }          from '../../components/ErrorBanner'
 export default function DashboardProfesor() {
   const { user } = useRequireRole('TEACHER')
 
-  const [courses,         setCourses]         = useState<any[]>([])
-  const [selectedCourseId, setSelectedCourseId] = useState<string>('')
-  const [enrollments,     setEnrollments]     = useState<any[]>([])
-  const [comment,         setComment]         = useState('')
-  const [loading,         setLoading]         = useState(true)
-  const [loadingStudents, setLoadingStudents] = useState(false)
-  const [saving,          setSaving]          = useState(false)
-  const [sendingComment,  setSendingComment]  = useState(false)
-  const [error,           setError]           = useState('')
-  const [successMsg,      setSuccessMsg]      = useState('')
-  // Editable grades/attendance per enrollment
-  const [edits, setEdits] = useState<Record<string, { grade: string; attendance: string }>>({})
+  const [courses,           setCourses]           = useState<any[]>([])
+  const [selectedCourseId,  setSelectedCourseId]  = useState<string>('')
+  const [enrollments,       setEnrollments]       = useState<any[]>([])
+  const [comment,           setComment]           = useState('')
+  const [loading,           setLoading]           = useState(true)
+  const [loadingStudents,   setLoadingStudents]   = useState(false)
+  const [saving,            setSaving]            = useState(false)
+  const [sendingComment,    setSendingComment]    = useState(false)
+  const [error,             setError]             = useState('')
+  const [successMsg,        setSuccessMsg]        = useState('')
+
+  // Simple grade per enrollment (0-10 float), no per-criteria breakdown in the simple UI.
+  // We create a single synthetic criteria entry using the course's first criterion or a default one.
+  const [grades, setGrades] = useState<Record<string, string>>({})
 
   // Load teacher's courses
   useEffect(() => {
@@ -33,9 +35,7 @@ export default function DashboardProfesor() {
           status: 'ACTIVE',
         })
         setCourses(data)
-        if (data.length > 0) {
-          setSelectedCourseId(data[0].id)
-        }
+        if (data.length > 0) setSelectedCourseId(data[0].id)
       } catch (err) {
         if (err instanceof ApiError) setError(err.message)
         else setError('Error al cargar tus cursos.')
@@ -52,19 +52,17 @@ export default function DashboardProfesor() {
     const load = async () => {
       setLoadingStudents(true)
       setEnrollments([])
-      setEdits({})
+      setGrades({})
       try {
         const data = await api.enrollments.getAll({ courseId: selectedCourseId, status: 'ACTIVE' })
         setEnrollments(data)
-        // Initialize edits from existing data
-        const initEdits: Record<string, { grade: string; attendance: string }> = {}
+        // Initialize grades from existing grade data
+        const initGrades: Record<string, string> = {}
         data.forEach((e: any) => {
-          initEdits[e.id] = {
-            grade:      e.grade?.total_score != null ? String(e.grade.total_score) : '',
-            attendance: e.attendancePercent  != null ? String(e.attendancePercent)  : '',
-          }
+          const finalGrade = e.grades?.[0]?.finalGrade ?? e.grade?.finalGrade
+          initGrades[e.id] = finalGrade != null ? String(finalGrade) : ''
         })
-        setEdits(initEdits)
+        setGrades(initGrades)
       } catch (err) {
         if (err instanceof ApiError) setError(err.message)
         else setError('Error al cargar los alumnos del grupo.')
@@ -80,14 +78,37 @@ export default function DashboardProfesor() {
     setError('')
     setSuccessMsg('')
     try {
+      // Get evaluation criteria for the selected course
+      const selectedCourse = courses.find(c => c.id === selectedCourseId)
+      const criteria       = selectedCourse?.evaluationCriteria ?? []
+
       await Promise.all(
         enrollments.map(e => {
-          const edit = edits[e.id]
-          if (!edit) return Promise.resolve()
-          return api.enrollments.saveGrades(e.id, {
-            total_score:       parseFloat(edit.grade)      || 0,
-            attendancePercent: parseFloat(edit.attendance) || 0,
-          })
+          const raw = grades[e.id]
+          if (!raw) return Promise.resolve()
+          const score = parseFloat(raw)
+          if (isNaN(score)) return Promise.resolve()
+
+          // Build criteriaGrades from actual criteria if available; otherwise create a fallback
+          let criteriaGrades: any[]
+          if (criteria.length > 0) {
+            criteriaGrades = criteria.map((c: any) => ({
+              criteriaId:   c.id,
+              criteriaName: c.name,
+              score:        Math.min(10, Math.max(0, score)),
+              weight:       c.percentage,
+            }))
+          } else {
+            // Fallback: synthetic single criterion with 100% weight
+            criteriaGrades = [{
+              criteriaId:   '00000000-0000-0000-0000-000000000001',
+              criteriaName: 'Calificación Global',
+              score:        Math.min(10, Math.max(0, score)),
+              weight:       100,
+            }]
+          }
+
+          return api.enrollments.saveGrades(e.id, { criteriaGrades })
         })
       )
       setSuccessMsg('Calificaciones guardadas correctamente.')
@@ -140,10 +161,11 @@ export default function DashboardProfesor() {
       <div className="p-6 max-w-5xl mx-auto w-full space-y-6">
         <h2 className="text-xl font-bold text-gray-800">Panel del Profesor</h2>
 
-        {error       && <ErrorBanner message={error} onClose={() => setError('')} />}
-        {successMsg  && (
-          <div role="alert" className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-700 font-medium">
+        {error      && <ErrorBanner message={error} onClose={() => setError('')} />}
+        {successMsg && (
+          <div role="alert" className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-700 font-medium flex justify-between">
             ✅ {successMsg}
+            <button onClick={() => setSuccessMsg('')} className="text-green-500 hover:text-green-700 ml-4">✕</button>
           </div>
         )}
 
@@ -171,8 +193,8 @@ export default function DashboardProfesor() {
                     <p className="font-bold text-gray-800 text-sm">
                       {c.language?.name} — {c.level}
                     </p>
-                    {c.schedule && <p className="text-xs text-gray-500 mt-0.5">{c.schedule}</p>}
-                    <p className="text-xs text-blue-600 mt-1">{c._count?.enrollments ?? 0} alumnos</p>
+                    {c.scheduleDescription && <p className="text-xs text-gray-500 mt-0.5">{c.scheduleDescription}</p>}
+                    <p className="text-xs text-blue-600 mt-1">{c._count?.enrollments ?? c.currentStudents ?? 0} alumnos</p>
                   </button>
                 ))}
               </div>
@@ -181,8 +203,11 @@ export default function DashboardProfesor() {
             {/* Grade table */}
             <div className="bg-white rounded-xl shadow-sm p-5">
               <h3 className="text-blue-600 font-bold text-lg mb-4">
-                Registro de Calificaciones — {selectedCourse?.language?.name} {selectedCourse?.level}
+                Calificaciones — {selectedCourse?.language?.name} {selectedCourse?.level}
               </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Ingresa la calificación global (0–10). Se registrará como criterio único con 100% de peso.
+              </p>
 
               {loadingStudents ? (
                 <div className="py-8 flex justify-center">
@@ -197,15 +222,16 @@ export default function DashboardProfesor() {
                       <thead>
                         <tr className="border-b border-gray-200">
                           <th className="text-left py-2 px-3 text-gray-600 font-semibold">ALUMNO</th>
-                          <th className="text-left py-2 px-3 text-gray-600 font-semibold">CALIFICACIÓN</th>
-                          <th className="text-left py-2 px-3 text-gray-600 font-semibold">ASISTENCIA (%)</th>
+                          <th className="text-left py-2 px-3 text-gray-600 font-semibold">CALIFICACIÓN (0–10)</th>
+                          <th className="text-left py-2 px-3 text-gray-600 font-semibold">ESTADO</th>
                         </tr>
                       </thead>
                       <tbody>
                         {enrollments.map((e: any) => {
                           const student = e.student?.user
-                          const edit    = edits[e.id] ?? { grade: '', attendance: '' }
-                          const grade   = parseFloat(edit.grade)
+                          const val     = grades[e.id] ?? ''
+                          const num     = parseFloat(val)
+                          const approves = !isNaN(num) && num >= 7
                           return (
                             <tr key={e.id} className="border-b border-gray-100">
                               <td className="py-2 px-3 text-gray-700">
@@ -215,21 +241,18 @@ export default function DashboardProfesor() {
                                 <input
                                   type="number"
                                   min="0" max="10" step="0.1"
-                                  value={edit.grade}
-                                  onChange={ev => setEdits(d => ({ ...d, [e.id]: { ...d[e.id], grade: ev.target.value } }))}
-                                  className={`w-20 border rounded px-2 py-1 text-sm outline-none focus:border-blue-400 ${!isNaN(grade) && grade < 7 ? 'text-red-600 border-red-300' : 'text-gray-800'}`}
+                                  value={val}
+                                  onChange={ev => setGrades(g => ({ ...g, [e.id]: ev.target.value }))}
+                                  className={`w-24 border rounded px-2 py-1 text-sm outline-none focus:border-blue-400 ${!isNaN(num) && num < 7 ? 'text-red-600 border-red-300' : 'text-gray-800 border-gray-300'}`}
                                   aria-label="Calificación"
                                 />
                               </td>
                               <td className="py-2 px-3">
-                                <input
-                                  type="number"
-                                  min="0" max="100"
-                                  value={edit.attendance}
-                                  onChange={ev => setEdits(d => ({ ...d, [e.id]: { ...d[e.id], attendance: ev.target.value } }))}
-                                  className="w-20 border border-gray-300 rounded px-2 py-1 text-sm outline-none focus:border-blue-400"
-                                  aria-label="Asistencia"
-                                />
+                                {!isNaN(num) && (
+                                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${approves ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                    {approves ? 'Aprobado' : 'Reprobado'}
+                                  </span>
+                                )}
                               </td>
                             </tr>
                           )
@@ -245,7 +268,7 @@ export default function DashboardProfesor() {
                     className="mt-4 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors flex items-center gap-2"
                   >
                     {saving && <ButtonSpinner />}
-                    {saving ? 'Guardando...' : 'Guardar Cambios del Grupo'}
+                    {saving ? 'Guardando...' : 'Guardar Calificaciones'}
                   </button>
                 </>
               )}
@@ -265,13 +288,16 @@ export default function DashboardProfesor() {
           />
           <button
             onClick={handleSendComment}
-            disabled={sendingComment || !comment.trim()}
+            disabled={sendingComment || comment.trim().length < 10}
             aria-busy={sendingComment}
             className="mt-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors flex items-center gap-2"
           >
             {sendingComment && <ButtonSpinner />}
             {sendingComment ? 'Enviando...' : 'Enviar Comentario'}
           </button>
+          {comment.trim().length > 0 && comment.trim().length < 10 && (
+            <p className="text-xs text-red-500 mt-1">El comentario debe tener al menos 10 caracteres.</p>
+          )}
         </div>
       </div>
     </div>

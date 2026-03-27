@@ -27,6 +27,7 @@ export default function DashboardAdmin() {
 
   // ── KPIs ──
   const [kpis,    setKpis]    = useState<any>(null)
+  const [stats,   setStats]   = useState<any>(null)
   const [kpiLoad, setKpiLoad] = useState(true)
 
   // ── Pending Documents ──
@@ -58,14 +59,16 @@ export default function DashboardAdmin() {
     if (!user) return
     const loadAll = async () => {
       try {
-        const [kpiData, docData, commData] = await Promise.all([
+        const [kpiData, docData, commData, statsData] = await Promise.all([
           api.reports.getDashboard(),
           api.reports.getPendingDocuments(),
           api.reports.getTeacherComments(true),
+          api.payments.getStats()
         ])
         setKpis(kpiData)
         setDocs(docData)
         setComments(commData)
+        setStats(statsData)
       } catch (err) {
         if (err instanceof ApiError) setError(err.message)
       } finally {
@@ -155,8 +158,8 @@ export default function DashboardAdmin() {
 
   const KPI_CARDS = [
     { label: 'Inscripciones Activas', value: kpis?.activeEnrollments ?? 0, color: 'border-l-green-500', text: 'text-green-700' },
-    { label: 'Ingresos este Mes',     value: `$${Number(kpis?.revenueThisMonth ?? 0).toLocaleString('es-MX')}`, color: 'border-l-blue-500',   text: 'text-blue-700'  },
-    { label: 'Bajas este Mes',        value: kpis?.dropsThisMonth ?? 0,     color: 'border-l-red-500',   text: 'text-red-600'   },
+    { label: 'Ingresos Históricos',   value: `$${Number(stats?.totalRevenue ?? 0).toLocaleString('es-MX')}`, color: 'border-l-blue-500',   text: 'text-blue-700'  },
+    { label: 'Bajas Registradas',     value: kpis?.dropsThisMonth ?? 0,     color: 'border-l-red-500',   text: 'text-red-600'   },
     { label: 'Documentos Pendientes', value: kpis?.pendingDocuments ?? 0,   color: 'border-l-yellow-500', text: 'text-yellow-700' },
   ]
 

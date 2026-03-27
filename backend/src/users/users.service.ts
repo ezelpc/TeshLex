@@ -251,15 +251,6 @@ export class UsersService {
         courses: {
           where:   { status: 'ACTIVE' },
           include: { language: true },
-          select: {
-            id:                  true,
-            level:               true,
-            modality:            true,
-            scheduleDescription: true,
-            currentStudents:     true,
-            maxStudents:         true,
-            language:            true,
-          },
         },
         _count: {
           select: { courses: true },

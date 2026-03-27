@@ -45,4 +45,8 @@ export class CreateTeacherDto {
   @IsString()
   @MaxLength(15)
   phone?: string
+
+  @ApiPropertyOptional({ example: 20 })
+  @IsOptional()
+  maxStudents?: number
 }

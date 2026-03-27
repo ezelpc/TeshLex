@@ -2,10 +2,10 @@
 import {
   Injectable, NotFoundException,
   BadRequestException, UnauthorizedException, Logger,
+  HttpException, InternalServerErrorException
 } from '@nestjs/common'
 import { ConfigService }        from '@nestjs/config'
-import * as crypto              from 'crypto'
-import { MercadoPagoConfig, Preference, Payment, PaymentRefund } from 'mercadopago'
+import { MercadoPagoConfig, Preference, Payment as MPPayment, PaymentRefund } from 'mercadopago'
 import { PrismaService }        from '../prisma/prisma.service'
 import { NotificationsService } from '../notifications/notifications.service'
 import { EnrollmentsService }   from '../enrollments/enrollments.service'
@@ -14,13 +14,8 @@ import { PaymentStatus, PaymentType } from '@prisma/client'
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name)
-  private readonly mpClient:       MercadoPagoConfig
-  private readonly preference:     Preference
-  private readonly mpPayment:      Payment
-  private readonly mpRefund:       PaymentRefund
-  private readonly webhookSecret:  string
-  private readonly backendUrl:     string
-  private readonly frontendUrl:    string
+  private readonly mpClient: MercadoPagoConfig
+  private readonly frontendUrl: string
 
   constructor(
     private readonly prisma:        PrismaService,
@@ -28,41 +23,18 @@ export class PaymentsService {
     private readonly notifications: NotificationsService,
     private readonly enrollments:   EnrollmentsService,
   ) {
-    this.mpClient = new MercadoPagoConfig({
-      accessToken: this.config.get<string>('MP_ACCESS_TOKEN', ''),
-      options: {
-        // testToken: true enables sandbox mode in mercadopago SDK v2
-        testToken: this.config.get<string>('MP_SANDBOX', 'true') === 'true',
-      },
-    })
-    this.preference    = new Preference(this.mpClient)
-    this.mpPayment     = new Payment(this.mpClient)
-    this.mpRefund      = new PaymentRefund(this.mpClient)
-    this.webhookSecret = this.config.get<string>('MP_WEBHOOK_SECRET', '')
-    this.backendUrl    = this.config.get<string>('BACKEND_URL',    'http://localhost:3000')
-    this.frontendUrl   = this.config.get<string>('FRONTEND_URL',   'http://localhost:5173')
+    const accessToken  = this.config.get<string>('MERCADOPAGO_ACCESS_TOKEN', '')
+    this.frontendUrl   = this.config.get<string>('FRONTEND_URL', 'http://localhost:5173')
+    
+    // Inicializar SDK de MercadoPago
+    this.mpClient = new MercadoPagoConfig({ accessToken, options: { timeout: 10000 } })
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // VERIFICAR FIRMA HMAC
+  // CREAR PREFERENCE
   // ══════════════════════════════════════════════════════════════════════════
 
-  verifyHmacSignature(rawBody: Buffer, signature: string): void {
-    if (!this.webhookSecret) return // sin secreto en dev → ignorar
-    const hash = crypto
-      .createHmac('sha256', this.webhookSecret)
-      .update(rawBody)
-      .digest('hex')
-    if (hash !== signature) {
-      throw new UnauthorizedException('Firma de webhook inválida')
-    }
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // CREAR PREFERENCIA
-  // ══════════════════════════════════════════════════════════════════════════
-
-  async createPreference(studentProfileId: string, enrollmentId: string) {
+  async createPreference(enrollmentId: string, studentProfileId: string) {
     const enrollment = await this.prisma.enrollment.findUnique({
       where: { id: enrollmentId },
       include: {
@@ -91,131 +63,175 @@ export class PaymentsService {
     const language = course.language   as any
     const user     = enrollment.student.user as any
     const title    = `${language.name} ${course.level} — TESH`
-    const amount   = Number(course.enrollmentFee)
+    const rawPrice = course.price?.toString() || course.enrollmentFee?.toString() || '1500'
+    let amount   = Number(rawPrice)
+    if (isNaN(amount) || amount <= 0) amount = 1500
 
-    // Crear preferencia en Mercado Pago
-    const mpResponse = await this.preference.create({
-      body: {
-        items: [{
-          id:          enrollmentId,
-          title,
-          quantity:    1,
-          unit_price:  amount,
-          currency_id: 'MXN',
-        }],
-        payer: {
-          email:   user.email,
-          name:    user.firstName,
-          surname: user.lastName,
-        },
-        back_urls: {
-          success: `${this.frontendUrl}/pago/confirmado`,
-          failure: `${this.frontendUrl}/pago/fallido`,
-          pending: `${this.frontendUrl}/pago/pendiente`,
-        },
-        auto_return:          'approved',
-        notification_url:     `${this.backendUrl}/api/payments/webhook`,
-        external_reference:   enrollmentId,
-        statement_descriptor: 'TESH Cursos',
-      },
+    // Check if we already have a pending Payment for this enrollment
+    let payment = await this.prisma.payment.findFirst({
+      where: { enrollmentId, status: PaymentStatus.PENDING },
     })
 
-    const preferenceId = mpResponse.id ?? null
-    const checkoutUrl  = mpResponse.init_point ?? null
+    let preferenceId: string
+    let initPoint: string | undefined
 
-    // Guardar Payment en BD — usar create con upsert por mpExternalRef
-    await this.prisma.payment.upsert({
-      where:  { mpExternalRef: enrollmentId },
-      update: {
-        mpPreferenceId: preferenceId,
-        receiptUrl:     checkoutUrl,
-        amount,
-        status:         PaymentStatus.PENDING,
-        mpStatus:       'pending',
-      },
-      create: {
-        studentId:      studentProfileId,
-        enrollmentId,
-        type:           PaymentType.ENROLLMENT_FEE,
-        mpPreferenceId: preferenceId,
-        mpExternalRef:  enrollmentId,
-        receiptUrl:     checkoutUrl,
-        amount,
-        status:         PaymentStatus.PENDING,
-        currency:       'MXN',
-        description:    title,
-        mpStatus:       'pending',
-      },
-    })
+    // Always create a fresh preference to ensure updated urls/data or prices
+    const preferenceClient = new Preference(this.mpClient)
+    
+    const backendUrl = this.config.get('BACKEND_URL', 'http://localhost:3000') // En PROD debe ser el dominio público
+    
+    try {
+      const result = await preferenceClient.create({
+        body: {
+          items: [
+            {
+              id: course.id,
+              title: title,
+              quantity: 1,
+              unit_price: amount,
+              currency_id: 'MXN',
+            },
+          ],
+          payer: {
+            email: 'test_user_1234@testuser.com', // Email genérico para evitar cruces con cuentas reales
+          },
+          back_urls: {
+            success: `${this.frontendUrl}/pago/exitoso`,
+            pending: `${this.frontendUrl}/pago/pendiente`,
+            failure: `${this.frontendUrl}/pago/error`,
+          },
+          auto_return: 'approved',
+          notification_url: `${backendUrl}/api/payments/webhook`,
+          external_reference: enrollmentId,
+        },
+      })
 
-    this.logger.log(`Preferencia MP creada: ${preferenceId} → inscripción ${enrollmentId}`)
-    return { preferenceId, checkoutUrl }
+      initPoint = result.init_point
+      preferenceId = result.id!
+      this.logger.debug(`Generated Preference ID: ${preferenceId} (Length: ${preferenceId.length})`)
+    } catch (apiError: any) {
+      this.logger.error('Error from MercadoPago API:', apiError)
+      if (apiError.cause) this.logger.error('MP Error Cause:', apiError.cause)
+      throw new InternalServerErrorException('Error al comunicarse con MercadoPago')
+    }
+
+    // Guardar en BD
+    try {
+      if (payment) {
+        await this.prisma.payment.update({
+          where: { id: payment.id },
+          data: {
+            mpPreferenceId: preferenceId,
+            mpExternalRef:  enrollmentId, 
+            amount,
+          }
+        })
+      } else {
+        await this.prisma.payment.create({
+          data: {
+            studentId:             studentProfileId,
+            enrollmentId,
+            type:                  PaymentType.ENROLLMENT_FEE,
+            mpPreferenceId:        preferenceId,
+            mpExternalRef:         enrollmentId,
+            amount,
+            status:                PaymentStatus.PENDING,
+            currency:              'MXN',
+            description:           title,
+          },
+        })
+      }
+    } catch (dbError) {
+      this.logger.error('Database Error when saving preference:', dbError)
+      throw new InternalServerErrorException('Error local al guardar intención de pago')
+    }
+
+    this.logger.log(`MP Preference creada: ${preferenceId} → inscripción ${enrollmentId}`)
+    return {
+      preferenceId,
+      initPoint,
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // MANEJAR WEBHOOK
+  // MANEJAR WEBHOOK (IPN MercadoPago)
   // ══════════════════════════════════════════════════════════════════════════
 
-  async handleWebhook(mpPaymentId: string) {
-    const mpData       = await this.mpPayment.get({ id: mpPaymentId })
-    const enrollmentId = mpData.external_reference
-    const mpStatus     = (mpData.status ?? '').toUpperCase()
-    const amount       = mpData.transaction_amount ?? 0
-
-    if (!enrollmentId) {
-      this.logger.warn(`Webhook MP sin external_reference — pago ${mpPaymentId}`)
-      return { ignored: true }
+  async handleWebhook(body: any) {
+    if (!body || !body.type || !body.data || !body.data.id) {
+       return { ignored: true }
     }
 
-    // Mapear estado de MP a PaymentStatus
-    let paymentStatus: PaymentStatus
-    switch (mpStatus) {
-      case 'APPROVED':  paymentStatus = PaymentStatus.APPROVED;  break
-      case 'REJECTED':  paymentStatus = PaymentStatus.REJECTED;  break
-      case 'REFUNDED':  paymentStatus = PaymentStatus.REFUNDED;  break
-      case 'CANCELLED': paymentStatus = PaymentStatus.CANCELLED; break
-      default:          paymentStatus = PaymentStatus.PENDING
+    if (body.type === 'payment') {
+      const paymentId = body.data.id
+      const paymentClient = new MPPayment(this.mpClient)
+      
+      try {
+        const mpPayment = await paymentClient.get({ id: paymentId })
+        const enrollmentId = mpPayment.external_reference || mpPayment.metadata?.enrollmentId || null
+
+        if (!enrollmentId) {
+           this.logger.warn(`Pago de MP ${paymentId} sin external_reference`)
+           return { ignored: true }
+        }
+
+        const isApproved = mpPayment.status === 'approved'
+
+        // Get the payment record spanning the preference
+        let paymentRecord = await this.prisma.payment.findFirst({
+           where: { enrollmentId, status: PaymentStatus.PENDING },
+           orderBy: { createdAt: 'desc' }
+        })
+
+        if (!paymentRecord) {
+           // Podría estar aprobado ya, consultamos solo para loggear
+           paymentRecord = await this.prisma.payment.findFirst({
+             where: { enrollmentId },
+             orderBy: { createdAt: 'desc' }
+           })
+           if (!paymentRecord) return { ignored: true }
+        }
+
+        let newStatus = paymentRecord.status
+        if (isApproved) newStatus = PaymentStatus.APPROVED
+        else if (mpPayment.status === 'rejected' || mpPayment.status === 'cancelled') newStatus = PaymentStatus.REJECTED
+
+        // Actualizamos estado del pago de MP
+        const updatedPayment = await this.prisma.payment.update({
+           where: { id: paymentRecord.id },
+           data: {
+              status: newStatus,
+              mpPaymentId: String(paymentId),
+              mpStatus: mpPayment.status,
+              mpStatusDetail: mpPayment.status_detail,
+              webhookReceivedAt: new Date(),
+           },
+           include: {
+              enrollment: { include: { student: { include: { user: true } }, course: { include: { language: true } } } }
+           }
+        })
+
+        if (isApproved && updatedPayment.enrollment && updatedPayment.enrollment.status === 'PENDING_PAYMENT') {
+           // Activar inscripción en sistema
+           await this.enrollments.activate(enrollmentId)
+
+           const user   = updatedPayment.enrollment.student.user as any
+           const course = updatedPayment.enrollment.course       as any
+           const name   = `${user.firstName} ${user.lastName}`
+           const cName  = `${course.language.name} ${course.level}`
+   
+           await this.notifications.sendPaymentConfirmation(user.email, name, Number(updatedPayment.amount), cName)
+           this.logger.log(`Pago aprobado (MercadoPago) e inscripción activada: ${enrollmentId}`)
+        }
+
+        return { status: newStatus }
+      } catch (err) {
+        this.logger.error(`Error verificando pago en MP: ${err.message}`)
+        return { error: true }
+      }
     }
 
-    // Actualizar Payment
-    const payment = await this.prisma.payment.update({
-      where: { mpExternalRef: enrollmentId },
-      data: {
-        mpPaymentId:       mpPaymentId,
-        mpStatus:          mpData.status ?? null,
-        mpStatusDetail:    mpData.status_detail ?? null,
-        mpPaymentMethod:   (mpData as any).payment_method_id ?? null,
-        status:            paymentStatus,
-        webhookReceivedAt: new Date(),
-      },
-      include: {
-        enrollment: {
-          include: {
-            student: {
-              include: {
-                user: { select: { firstName: true, lastName: true, email: true } },
-              },
-            },
-            course: { include: { language: true } },
-          },
-        },
-      },
-    })
-
-    // Si APROBADO → activar inscripción y notificar
-    if (paymentStatus === PaymentStatus.APPROVED && payment.enrollment) {
-      await this.enrollments.activate(enrollmentId)
-
-      const user   = payment.enrollment.student.user  as any
-      const course = payment.enrollment.course        as any
-      const name   = `${user.firstName} ${user.lastName}`
-      const cName  = `${(course.language as any).name} ${course.level}`
-
-      await this.notifications.sendPaymentConfirmation(user.email, name, amount, cName)
-      this.logger.log(`Pago aprobado e inscripción activada: ${enrollmentId}`)
-    }
-
-    return { status: paymentStatus, enrollmentId }
+    return { ignored: true }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -262,6 +278,30 @@ export class PaymentsService {
     })
   }
 
+  async getStats() {
+    const [approved, pending, rejected] = await Promise.all([
+      this.prisma.payment.aggregate({
+        _sum: { amount: true },
+        where: { status: PaymentStatus.APPROVED },
+      }),
+      this.prisma.payment.aggregate({
+        _sum: { amount: true },
+        where: { status: PaymentStatus.PENDING },
+      }),
+      this.prisma.payment.aggregate({
+        _sum: { amount: true },
+        where: { status: PaymentStatus.REJECTED },
+      }),
+    ])
+
+    return {
+      totalRevenue:  Number(approved._sum?.amount || 0),
+      totalApproved: Number(approved._sum?.amount || 0),
+      totalPending:  Number(pending._sum?.amount || 0),
+      totalRejected: Number(rejected._sum?.amount || 0),
+    }
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // REEMBOLSO
   // ══════════════════════════════════════════════════════════════════════════
@@ -273,17 +313,17 @@ export class PaymentsService {
       throw new BadRequestException('Solo se pueden reembolsar pagos aprobados')
     }
     if (!payment.mpPaymentId) {
-      throw new BadRequestException('No se encontró el ID de pago en Mercado Pago')
+      throw new BadRequestException('No se encontró el ID de pago en MercadoPago para solicitar reembolso')
     }
 
-    await this.mpRefund.total({ payment_id: payment.mpPaymentId })
+    const refundClient = new PaymentRefund(this.mpClient)
+    await refundClient.create({ payment_id: payment.mpPaymentId })
 
     const updated = await this.prisma.payment.update({
       where: { id },
       data: {
         status:      PaymentStatus.REFUNDED,
         refundedAt:  new Date(),
-        mpStatus:    'refunded',
       },
     })
 
@@ -297,7 +337,7 @@ export class PaymentsService {
       },
     })
 
-    this.logger.log(`Reembolso procesado para pago ${id}`)
+    this.logger.log(`Reembolso MercadoPago procesado para pago ${id}`)
     return updated
   }
 }

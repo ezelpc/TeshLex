@@ -4,6 +4,7 @@ import {
   Body, Param, Query, UseGuards,
   HttpCode, HttpStatus,
 } from '@nestjs/common'
+import { SkipThrottle } from '@nestjs/throttler'
 import {
   ApiTags, ApiOperation, ApiBearerAuth,
   ApiQuery, ApiParam,
@@ -44,6 +45,7 @@ export class EnrollmentsController {
 
   // ── GET /api/enrollments/my — Alumno ─────────────────────────────────────
   @Get('my')
+  @SkipThrottle()
   @ApiOperation({ summary: '[Alumno] Mis inscripciones activas y pendientes' })
   getMyEnrollments(@CurrentUser() user: any) {
     return this.enrollmentsService.findAll({ studentId: user.studentProfileId })
@@ -74,6 +76,7 @@ export class EnrollmentsController {
 
   // ── POST /api/enrollments/pre-enroll — Alumno ────────────────────────────
   @Post('pre-enroll')
+  @SkipThrottle()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary:     '[Alumno] Pre-inscribirse a un curso',

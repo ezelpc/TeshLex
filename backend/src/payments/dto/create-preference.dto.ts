@@ -1,12 +1,13 @@
 // src/payments/dto/create-preference.dto.ts
-import { IsUUID } from 'class-validator'
-import { ApiProperty } from '@nestjs/swagger'
+import { IsUUID, IsNotEmpty } from 'class-validator'
+import { ApiProperty }        from '@nestjs/swagger'
 
 export class CreatePreferenceDto {
   @ApiProperty({
-    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-    description: 'UUID de la inscripción para la que se genera el pago',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+    description: 'ID de la inscripción a pagar',
   })
-  @IsUUID()
+  @IsUUID('4', { message: 'El enrollmentId debe ser un UUID válido' })
+  @IsNotEmpty()
   enrollmentId: string
 }

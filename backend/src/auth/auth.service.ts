@@ -48,6 +48,7 @@ export class AuthService {
     ipAddress?: string,
     userAgent?: string,
   ) {
+    this.logger.log(`LOGIN DEBUG: Starting login sequence for ${email}`);
     // 1. Buscar usuario — normalize email
     const user = await this.prisma.user.findUnique({
       where:   { email: email.toLowerCase().trim() },
@@ -60,10 +61,12 @@ export class AuthService {
         },
       },
     })
+    this.logger.log(`LOGIN DEBUG: findUnique finished`);
 
     // Mismo mensaje para "no existe" y "contraseña incorrecta"
     // para evitar enumeración de usuarios
     if (!user) {
+      this.logger.log(`LOGIN DEBUG: User not found`);
       throw new UnauthorizedException('Credenciales incorrectas')
     }
 

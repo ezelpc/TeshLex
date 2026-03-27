@@ -2,18 +2,15 @@
 import {
   Controller, Get, Post, Param, Body, Query,
   UseGuards, HttpCode, HttpStatus, Req,
-  UnauthorizedException,
 } from '@nestjs/common'
 import {
   ApiTags, ApiOperation, ApiBearerAuth,
   ApiQuery, ApiParam,
 } from '@nestjs/swagger'
 import { SkipThrottle }        from '@nestjs/throttler'
-import type { Request }        from 'express'
 import { Role, PaymentStatus } from '@prisma/client'
 import { PaymentsService }     from './payments.service'
 import { CreatePreferenceDto } from './dto/create-preference.dto'
-import { WebhookDto }          from './dto/webhook.dto'
 import { JwtAuthGuard }        from '../common/guards/jwt-auth.guard'
 import { RolesGuard }          from '../common/guards/roles.guard'
 import { Roles }               from '../common/decorators/roles.decorator'
@@ -24,53 +21,49 @@ import { CurrentUser }         from '../common/decorators/current-user.decorator
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
-  // ── POST /api/payments/preference — Alumno crea la preferencia ───────────
-  @Post('preference')
+  // ── POST /api/payments/create-preference — Alumno inicia el pago ─────────────
+  @Post('create-preference')
+  @SkipThrottle()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.STUDENT)
   @HttpCode(HttpStatus.CREATED)
   @ApiBearerAuth('JWT-Auth')
   @ApiOperation({
     summary:     '[Alumno] Iniciar pago de inscripción',
-    description: 'Genera una preferencia de Mercado Pago y retorna la URL de pago.',
+    description: 'Genera una Preference en MercadoPago y retorna el init_point y preferenceId.',
   })
   createPreference(
     @CurrentUser() user: any,
     @Body() dto: CreatePreferenceDto,
   ) {
-    return this.paymentsService.createPreference(user.studentProfileId, dto.enrollmentId)
+    return this.paymentsService.createPreference(dto.enrollmentId, user.studentProfileId)
   }
 
-  // ── POST /api/payments/webhook — Mercado Pago notifica el pago ───────────
+  // ── POST /api/payments/webhook — MP notifica cambios de estado ────────
   @Post('webhook')
   @SkipThrottle()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary:     '[MP] Webhook de Mercado Pago (sin autenticación JWT)',
-    description: 'Verificación HMAC-SHA256. Actualiza el pago y activa la inscripción si fue aprobado.',
+    summary:     '[MercadoPago] Webhook IPN (sin autenticación JWT)',
+    description: 'Procesa notificaciones de pagos de MercadoPago.',
   })
-  async webhook(
-    @Req() req: Request,
-    @Body() body: WebhookDto,
-  ) {
-    // Verificar firma HMAC con el body crudo
-    const rawBody  = (req as any).rawBody as Buffer | undefined
-    const signature = (req.headers['x-signature'] as string) ?? ''
+  async webhook(@Body() body: any) {
+    return this.paymentsService.handleWebhook(body)
+  }
 
-    if (rawBody) {
-      this.paymentsService.verifyHmacSignature(rawBody, signature)
-    }
-
-    // Solo procesar notificaciones de tipo "payment"
-    if (body.type !== 'payment' || !body.data?.id) {
-      return { ignored: true }
-    }
-
-    return this.paymentsService.handleWebhook(body.data.id)
+  // ── GET /api/payments/stats — Admin métricas de ingresos ─────────────────
+  @Get('stats')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiBearerAuth('JWT-Auth')
+  @ApiOperation({ summary: '[Admin] Obtener estadísticas de pagos' })
+  getStats() {
+    return this.paymentsService.getStats()
   }
 
   // ── GET /api/payments/my — Alumno consulta sus pagos ────────────────────
   @Get('my')
+  @SkipThrottle()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-Auth')
   @ApiOperation({ summary: '[Alumno] Mis pagos' })

@@ -202,7 +202,7 @@ export const api = {
       return apiFetch<any[]>(`/courses${qs}`)
     },
     async getLanguages() {
-      return apiFetch<any[]>('/courses/languages')
+      return apiFetch<any[]>('/courses/languages/list')
     },
     async getOne(id: string) {
       return apiFetch<any>(`/courses/${id}`)
@@ -259,13 +259,23 @@ export const api = {
   // ── Payments ──────────────────────────────
   payments: {
     async createPreference(enrollmentId: string) {
-      return apiFetch<{ preferenceId: string; checkoutUrl: string }>('/payments/preference', {
+      return apiFetch<{ preferenceId: string; initPoint?: string }>('/payments/create-preference', {
         method: 'POST',
         body: JSON.stringify({ enrollmentId }),
       })
     },
     async getMy() {
       return apiFetch<any[]>('/payments/my')
+    },
+    async getStats() {
+      return apiFetch<{ totalRevenue: number; totalApproved: number; totalPending: number; totalRejected: number }>('/payments/stats')
+    },
+    async getAll(filters?: { studentId?: string; status?: string }) {
+      const q = new URLSearchParams()
+      if (filters?.studentId) q.set('studentId', filters.studentId)
+      if (filters?.status)    q.set('status',    filters.status)
+      const qs = q.toString() ? `?${q.toString()}` : ''
+      return apiFetch<any[]>(`/payments${qs}`)
     },
   },
 
@@ -309,7 +319,7 @@ export const api = {
   // ── Users comments (teacher) ──────────────
   teacher: {
     async sendComment(message: string) {
-      return apiFetch('/users/me/comment', {
+      return apiFetch('/users/teachers/comments', {
         method: 'POST',
         body: JSON.stringify({ message }),
       })

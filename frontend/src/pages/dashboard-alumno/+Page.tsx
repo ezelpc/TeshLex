@@ -12,6 +12,7 @@ export default function DashboardAlumno() {
   const { user } = useRequireRole('STUDENT')
 
   const [enrollments, setEnrollments] = useState<any[]>([])
+  const [payments,    setPayments]    = useState<any[]>([])
   const [loading,     setLoading]     = useState(true)
   const [error,       setError]       = useState('')
 
@@ -20,8 +21,12 @@ export default function DashboardAlumno() {
     const load = async () => {
       setLoading(true)
       try {
-        const data = await api.enrollments.getMy()
-        setEnrollments(data)
+        const [enrollData, payData] = await Promise.all([
+          api.enrollments.getMy(),
+          api.payments.getMy(),
+        ])
+        setEnrollments(enrollData)
+        setPayments(payData)
       } catch (err) {
         if (err instanceof ApiError) setError(err.message)
         else setError('Error al cargar tus inscripciones.')
@@ -66,9 +71,19 @@ export default function DashboardAlumno() {
       </nav>
 
       <div className="p-6 max-w-5xl mx-auto w-full space-y-6">
-        <h2 className="text-xl font-bold text-gray-800">
-          Bienvenido(a), {user.firstName}
-        </h2>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <h2 className="text-xl font-bold text-gray-800">
+            Bienvenido(a), {user.firstName}
+          </h2>
+          {!active && !pendingPay && (
+            <a
+              href="/catalogo"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-5 py-2.5 rounded-lg transition-colors shadow-sm whitespace-nowrap"
+            >
+              + Inscribirse a Nuevo Curso
+            </a>
+          )}
+        </div>
 
         {error && <ErrorBanner message={error} onRetry={() => window.location.reload()} />}
 
@@ -219,6 +234,50 @@ export default function DashboardAlumno() {
                           ) : (
                             <span className="text-gray-400 text-xs">No disponible</span>
                           )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Mis Pagos */}
+        <div className="bg-white rounded-xl shadow-sm p-5">
+          <h3 className="text-green-700 font-bold text-lg mb-4">Mis Pagos</h3>
+          {payments.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">No hay registros de pago.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Curso</th>
+                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Monto</th>
+                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Fecha</th>
+                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.map((p: any) => {
+                    const c = p.enrollment?.course
+                    const courseName = c ? `${c.language?.name} — ${c.level}` : p.description
+                    let badgeClass = 'bg-gray-100 text-gray-600'
+                    if (p.status === 'APPROVED') badgeClass = 'bg-green-100 text-green-700'
+                    if (p.status === 'PENDING')  badgeClass = 'bg-yellow-100 text-yellow-700'
+                    if (p.status === 'REJECTED') badgeClass = 'bg-red-100 text-red-700'
+                    
+                    return (
+                      <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-2 px-3 text-gray-700 font-medium">{courseName}</td>
+                        <td className="py-2 px-3 text-gray-700 font-bold">${Number(p.amount).toLocaleString('es-MX')}</td>
+                        <td className="py-2 px-3 text-gray-500">{new Date(p.createdAt).toLocaleDateString('es-MX')}</td>
+                        <td className="py-2 px-3">
+                           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${badgeClass}`}>
+                             {p.status}
+                           </span>
                         </td>
                       </tr>
                     )

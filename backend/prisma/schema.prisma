@@ -261,6 +261,7 @@ model Course {
   enrollmentFee       Decimal        @default(1500.00) @db.Decimal(10, 2)
   monthlyFee          Decimal        @default(0.00)    @db.Decimal(10, 2)
   materialFee         Decimal        @default(0.00)    @db.Decimal(10, 2)
+  price               Decimal        @default(0.00)    @db.Decimal(10, 2)
   teacherId           String?        @db.Uuid
   teacher             TeacherProfile? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
   description         String?        @db.Text
@@ -390,12 +391,12 @@ model Payment {
   amount            Decimal        @db.Decimal(10, 2)
   currency          String         @default("MXN") @db.VarChar(3)
   tax               Decimal        @default(0.00) @db.Decimal(10, 2)
-  mpPreferenceId    String?        @unique @db.VarChar(100)
-  mpPaymentId       String?        @unique @db.VarChar(50)
+  mpPreferenceId    String?        @unique @db.VarChar(255)
+  mpPaymentId       String?        @unique @db.VarChar(255)
   mpStatus          String?        @db.VarChar(50)
-  mpStatusDetail    String?        @db.VarChar(100)
+  mpStatusDetail    String?        @db.VarChar(255)
   mpPaymentMethod   String?        @db.VarChar(50)
-  mpExternalRef     String?        @unique @db.VarChar(100)
+  mpExternalRef     String?        @unique @db.VarChar(255)
   description       String?        @db.VarChar(300)
   metadata          Json?
   receiptUrl        String?        @db.VarChar(500)

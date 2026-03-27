@@ -14,7 +14,7 @@ import { ReportsModule }       from './reports/reports.module'
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 500 }]),
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -24,7 +24,7 @@ import { ReportsModule }       from './reports/reports.module'
     ReportsModule,
   ],
   providers: [
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule {}
