@@ -1,112 +1,7 @@
 // src/lib/api.ts
-// ─────────────────────────────────────────────
-// HTTP client for TeshLex backend
-// Auto-injects JWT, handles 401 → refresh → retry
-// ─────────────────────────────────────────────
+import type { UserDTO, CourseDTO, EnrollmentDTO, PaymentDTO, PaginatedResponse } from '../shared/types'
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api'
-
-// ─── Token Store ──────────────────────────────
-export interface SessionUser {
-  id:               string
-  email:            string
-  role:             'STUDENT' | 'TEACHER' | 'ADMIN' | 'SUPERADMIN'
-  firstName:        string
-  lastName:         string
-  studentProfileId?: string
-  teacherProfileId?: string
-}
-
-interface TokenData {
-  accessToken:  string
-  refreshToken: string
-  user:         SessionUser
-}
-
-export const tokenStore = {
-  get(): TokenData | null {
-    try {
-      const raw = localStorage.getItem('teshlex_session')
-      return raw ? (JSON.parse(raw) as TokenData) : null
-    } catch {
-      return null
-    }
-  },
-  set(data: TokenData) {
-    localStorage.setItem('teshlex_session', JSON.stringify(data))
-  },
-  getSession(): SessionUser | null {
-    return this.get()?.user ?? null
-  },
-  getAccessToken(): string | null {
-    return this.get()?.accessToken ?? null
-  },
-  getRefreshToken(): string | null {
-    return this.get()?.refreshToken ?? null
-  },
-  clear() {
-    localStorage.removeItem('teshlex_session')
-  },
-}
-
-// ─── Base Fetch ───────────────────────────────
-let isRefreshing = false
-let refreshWaiters: ((token: string) => void)[] = []
-
-async function apiFetch<T>(
-  path: string,
-  options: RequestInit & { skipAuth?: boolean } = {},
-): Promise<T> {
-  const { skipAuth, ...fetchOptions } = options
-  const headers = new Headers(fetchOptions.headers ?? {})
-  headers.set('Content-Type', 'application/json')
-
-  if (!skipAuth) {
-    const token = tokenStore.getAccessToken()
-    if (token) headers.set('Authorization', `Bearer ${token}`)
-  }
-
-  const res = await fetch(`${API_BASE}${path}`, { ...fetchOptions, headers })
-
-  // Auto-refresh on 401
-  if (res.status === 401 && !skipAuth && !path.includes('/auth/refresh')) {
-    if (!isRefreshing) {
-      isRefreshing = true
-      try {
-        const refreshToken = tokenStore.getRefreshToken()
-        if (!refreshToken) throw new Error('No refresh token')
-        const refreshed = await api.auth.refresh(refreshToken)
-        const current   = tokenStore.get()!
-        tokenStore.set({ ...current, accessToken: refreshed.accessToken })
-        isRefreshing = false
-        refreshWaiters.forEach(cb => cb(refreshed.accessToken))
-        refreshWaiters = []
-      } catch {
-        isRefreshing = false
-        tokenStore.clear()
-        window.location.href = '/login'
-        throw new Error('Session expired')
-      }
-    }
-
-    // Wait for ongoing refresh
-    const newToken = await new Promise<string>(resolve => {
-      refreshWaiters.push(resolve)
-    })
-    headers.set('Authorization', `Bearer ${newToken}`)
-    const retryRes = await fetch(`${API_BASE}${path}`, { ...fetchOptions, headers })
-    const retryJson = await retryRes.json()
-    if (!retryRes.ok) throw new ApiError(retryRes.status, retryJson?.message ?? 'Error')
-    return retryJson.data ?? retryJson
-  }
-
-  const json = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const msg = Array.isArray(json?.message) ? json.message.join(', ') : (json?.message ?? res.statusText)
-    throw new ApiError(res.status, msg)
-  }
-  return (json.data ?? json) as T
-}
 
 export class ApiError extends Error {
   public status: number
@@ -117,36 +12,117 @@ export class ApiError extends Error {
   }
 }
 
+// ─── Base Fetch ───────────────────────────────
+let isRefreshing = false
+let refreshWaiters: ((token: string) => void)[] = []
+
+async function apiFetch<T>(
+  path: string,
+  options: RequestInit & { skipAuth?: boolean } = {},
+): Promise<T> {
+  const { skipAuth, ...customOptions } = options
+  
+  const headers = new Headers(customOptions.headers ?? {})
+  headers.set('Content-Type', 'application/json')
+
+  const fetchOptions = {
+    ...customOptions,
+    headers,
+    credentials: 'include' as RequestCredentials,
+  }
+
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000)
+    
+    let res = await fetch(`${API_BASE}${path}`, { ...fetchOptions, signal: controller.signal })
+    clearTimeout(timeoutId)
+
+    // Auto-refresh on 401
+    if (res.status === 401 && !skipAuth && !path.includes('/auth/refresh')) {
+      if (!isRefreshing) {
+        isRefreshing = true
+        try {
+          const refreshRes = await fetch(`${API_BASE}/auth/refresh`, { 
+            method: 'POST', 
+            credentials: 'include',
+            signal: AbortSignal.timeout(5000)
+          })
+          if (!refreshRes.ok) throw new Error('Refresh failed')
+          
+          isRefreshing = false
+          const waiters = [...refreshWaiters]
+          refreshWaiters = []
+          waiters.forEach(cb => cb('OK'))
+        } catch (refreshErr) {
+          isRefreshing = false
+          const waiters = [...refreshWaiters]
+          refreshWaiters = []
+          waiters.forEach(cb => cb('FAIL'))
+          
+          if (window.location.pathname !== '/login') {
+            window.location.href = '/login'
+          }
+          throw new ApiError(401, 'Sesión expirada')
+
+        }
+      } else {
+        // Wait for ongoing refresh
+        await new Promise<void>((resolve, reject) => {
+          refreshWaiters.push((status) => {
+            if (status === 'OK') resolve()
+            else reject(new ApiError(401, 'Session failed'))
+          })
+        })
+      }
+      
+      // Retry with signal
+      const retryRes = await fetch(`${API_BASE}${path}`, { ...fetchOptions, signal: controller.signal })
+      const retryJson = await retryRes.json().catch(() => ({}))
+      if (!retryRes.ok) throw new ApiError(retryRes.status, retryJson?.message ?? 'Error')
+      return (retryJson.data ?? retryJson) as T
+    }
+
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const msg = Array.isArray(json?.message) ? json.message.join(', ') : (json?.message ?? res.statusText)
+      throw new ApiError(res.status, msg)
+    }
+    return (json.data ?? json) as T
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      console.error(`[API] Timeout en ${path}`)
+      throw new ApiError(408, 'Servidor no responde (Timeout)')
+    }
+    if (err instanceof ApiError) throw err
+    console.error(`[API] Error fatal en ${path}:`, err)
+    throw new ApiError(0, 'Error de conexión.')
+  }
+}
+
 // ─── API Namespaces ───────────────────────────
 export const api = {
 
   // ── Auth ──────────────────────────────────
   auth: {
-    async login(email: string, password: string): Promise<TokenData> {
-      const data = await apiFetch<TokenData>('/auth/login', {
+    async login(email: string, password: string): Promise<{ user: UserDTO }> {
+      return apiFetch<{ user: UserDTO }>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
         skipAuth: true,
       })
-      tokenStore.set(data)
-      return data
     },
-    async refresh(refreshToken: string) {
-      return apiFetch<{ accessToken: string }>('/auth/refresh', {
+    async refresh() {
+      return apiFetch<{ message: string }>('/auth/refresh', {
         method: 'POST',
-        body: JSON.stringify({ refreshToken }),
         skipAuth: true,
       })
     },
     async logout() {
-      try {
-        await apiFetch('/auth/logout', { method: 'POST' })
-      } finally {
-        tokenStore.clear()
-      }
+      return apiFetch('/auth/logout', { method: 'POST' })
     },
-    async me(): Promise<SessionUser> {
-      return apiFetch<SessionUser>('/auth/me')
+    async me(): Promise<UserDTO> {
+      return apiFetch<UserDTO>('/auth/me')
     },
     async changePassword(currentPassword: string, newPassword: string) {
       return apiFetch('/auth/change-password', {
@@ -170,7 +146,7 @@ export const api = {
       phone?:     string
       birthDate?: string
     }) {
-      return apiFetch<SessionUser>('/users/register', {
+      return apiFetch<{ user: UserDTO }>('/users/register', {
         method: 'POST',
         body: JSON.stringify(dto),
         skipAuth: true,
@@ -193,19 +169,19 @@ export const api = {
 
   // ── Courses ───────────────────────────────
   courses: {
-    async getAll(filters?: { status?: string; languageId?: string; teacherId?: string }) {
+    async getAll(filters?: { status?: string; languageId?: string; teacherId?: string }): Promise<CourseDTO[]> {
       const q = new URLSearchParams()
       if (filters?.status)     q.set('status',     filters.status)
       if (filters?.languageId) q.set('languageId', filters.languageId)
       if (filters?.teacherId)  q.set('teacherId',  filters.teacherId)
       const qs = q.toString() ? `?${q.toString()}` : ''
-      return apiFetch<any[]>(`/courses${qs}`)
+      return apiFetch<CourseDTO[]>(`/courses${qs}`)
     },
     async getLanguages() {
       return apiFetch<any[]>('/courses/languages/list')
     },
-    async getOne(id: string) {
-      return apiFetch<any>(`/courses/${id}`)
+    async getOne(id: string): Promise<CourseDTO> {
+      return apiFetch<CourseDTO>(`/courses/${id}`)
     },
     async createLanguage(dto: { name: string; code: string }) {
       return apiFetch('/courses/languages', {
@@ -213,25 +189,41 @@ export const api = {
         body: JSON.stringify(dto),
       })
     },
+    async getCycles() {
+      return apiFetch<any[]>('/courses/cycles/list')
+    },
+    async getActiveCycle() {
+      return apiFetch<any>('/courses/cycles/active')
+    },
+    async activateCycle(id: string) {
+      return apiFetch(`/courses/cycles/${id}/activate`, { method: 'PATCH' })
+    },
+    async updateCycle(id: string, dto: any) {
+      return apiFetch(`/courses/cycles/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(dto),
+      })
+    },
   },
+
 
   // ── Enrollments ───────────────────────────
   enrollments: {
-    async getMy() {
-      return apiFetch<any[]>('/enrollments/my')
+    async getMy(): Promise<EnrollmentDTO[]> {
+      return apiFetch<EnrollmentDTO[]>('/enrollments/my')
     },
-    async getMyHistory() {
-      return apiFetch<any[]>('/enrollments/my/history')
+    async getMyHistory(): Promise<EnrollmentDTO[]> {
+      return apiFetch<EnrollmentDTO[]>('/enrollments/my/history')
     },
-    async getAll(filters?: { courseId?: string; status?: string }) {
+    async getAll(filters?: { courseId?: string; status?: string }): Promise<EnrollmentDTO[]> {
       const q = new URLSearchParams()
       if (filters?.courseId) q.set('courseId', filters.courseId)
       if (filters?.status)   q.set('status',   filters.status)
       const qs = q.toString() ? `?${q.toString()}` : ''
-      return apiFetch<any[]>(`/enrollments${qs}`)
+      return apiFetch<EnrollmentDTO[]>(`/enrollments${qs}`)
     },
-    async preEnroll(courseId: string) {
-      return apiFetch<any>('/enrollments/pre-enroll', {
+    async preEnroll(courseId: string): Promise<EnrollmentDTO> {
+      return apiFetch<EnrollmentDTO>('/enrollments/pre-enroll', {
         method: 'POST',
         body: JSON.stringify({ courseId }),
       })
@@ -264,18 +256,21 @@ export const api = {
         body: JSON.stringify({ enrollmentId }),
       })
     },
-    async getMy() {
-      return apiFetch<any[]>('/payments/my')
+    async getMy(page = 1, limit = 50): Promise<PaginatedResponse<PaymentDTO>> {
+      // NOTE: Using fallback parsing until Paginated endpoints are fully hooked everywhere
+      const raw = await apiFetch<any>(`/payments/my?page=${page}&limit=${limit}`)
+      if (Array.isArray(raw)) return { data: raw, total: raw.length, page: 1, lastPage: 1 }
+      return raw as PaginatedResponse<PaymentDTO>
     },
     async getStats() {
       return apiFetch<{ totalRevenue: number; totalApproved: number; totalPending: number; totalRejected: number }>('/payments/stats')
     },
-    async getAll(filters?: { studentId?: string; status?: string }) {
+    async getAll(filters?: { studentId?: string; status?: string }): Promise<PaymentDTO[]> {
       const q = new URLSearchParams()
       if (filters?.studentId) q.set('studentId', filters.studentId)
       if (filters?.status)    q.set('status',    filters.status)
       const qs = q.toString() ? `?${q.toString()}` : ''
-      return apiFetch<any[]>(`/payments${qs}`)
+      return apiFetch<PaymentDTO[]>(`/payments${qs}`)
     },
   },
 
@@ -300,6 +295,7 @@ export const api = {
     async releaseDocument(id: string) {
       return apiFetch(`/reports/documents/${id}/release`, { method: 'PATCH' })
     },
+
     async getTeacherComments(unreadOnly = false) {
       const path = unreadOnly ? '/reports/comments?unread=true' : '/reports/comments'
       return apiFetch<any[]>(path)
@@ -326,3 +322,4 @@ export const api = {
     },
   },
 }
+

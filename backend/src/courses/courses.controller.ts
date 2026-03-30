@@ -203,6 +203,7 @@ export class CoursesController {
   }
 
   // PATCH /api/courses/cycles/:id/activate — Admin
+
   @Patch('cycles/:id/activate')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.SUPERADMIN)
@@ -214,5 +215,16 @@ export class CoursesController {
   @ApiParam({ name: 'id', description: 'UUID del ciclo' })
   activateCycle(@Param('id') id: string) {
     return this.coursesService.activateCycle(id)
+  }
+
+  // PATCH /api/courses/cycles/:id — Admin
+  @Patch('cycles/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @ApiBearerAuth('JWT-Auth')
+  @ApiOperation({ summary: '[Admin] Actualizar ciclo escolar' })
+  @ApiParam({ name: 'id', description: 'UUID del ciclo' })
+  updateCycle(@Param('id') id: string, @Body() dto: Partial<CreateCycleDto>) {
+    return this.coursesService.updateCycle(id, dto)
   }
 }

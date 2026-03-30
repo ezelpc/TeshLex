@@ -1,1 +1,48 @@
 @import "tailwindcss";
+
+@media print {
+  /* Hide everything by default */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Show only the printable schedule and its children */
+  .printable-only, .printable-only * {
+    visibility: visible;
+  }
+
+  .printable-only {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 2.5cm; /* standard margin for professional docs */
+    display: block !important;
+    background: white;
+  }
+
+  @page {
+    size: letter;
+    margin: 0;
+  }
+
+  /* Force color print */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide common UI patterns that might leak */
+  aside, header, nav, button, .no-print {
+    display: none !important;
+  }
+}
+
+/* Hide printable-only content in normal screen view */
+@media screen {
+  .printable-only {
+    display: none !important;
+  }
+}

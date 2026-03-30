@@ -128,10 +128,10 @@ export class EnrollmentsController {
   @ApiParam({ name: 'id', description: 'UUID de la inscripción' })
   saveGrades(
     @Param('id') id: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: { id: string, teacherProfileId?: string, role: string },
     @Body() dto: SaveGradesDto,
   ) {
-    return this.enrollmentsService.saveGrades(id, user.teacherProfileId, dto)
+    return this.enrollmentsService.saveGrades(id, user.teacherProfileId, user.role, dto)
   }
 
   // ── POST /api/enrollments/:id/attendance — Profesor ──────────────────────
@@ -143,9 +143,10 @@ export class EnrollmentsController {
   @ApiParam({ name: 'id', description: 'UUID de la inscripción' })
   recordAttendance(
     @Param('id') id: string,
+    @CurrentUser() user: { id: string, teacherProfileId?: string, role: string },
     @Body() dto: RecordAttendanceDto,
   ) {
-    return this.enrollmentsService.recordAttendance(id, dto.date, dto.present, dto.notes)
+    return this.enrollmentsService.recordAttendance(id, user.teacherProfileId, user.role, dto.date, dto.present, dto.notes)
   }
 
   // ── POST /api/enrollments/bulk-attendance — Profesor ─────────────────────
@@ -158,6 +159,7 @@ export class EnrollmentsController {
     description: 'Envía un arreglo con el estado de asistencia de todos los alumnos del curso.',
   })
   recordBulkAttendance(
+    @CurrentUser() user: { id: string, teacherProfileId?: string, role: string },
     @Body() body: {
       courseId: string
       date:     string
@@ -166,6 +168,8 @@ export class EnrollmentsController {
   ) {
     return this.enrollmentsService.recordBulkAttendance(
       body.courseId,
+      user.teacherProfileId,
+      user.role,
       body.date,
       body.records,
     )

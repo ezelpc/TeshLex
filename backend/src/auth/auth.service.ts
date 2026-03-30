@@ -273,7 +273,9 @@ export class AuthService {
   // GET /api/auth/me
   // ══════════════════════════════════════════════════════════════════════════
   async getMe(userId: string) {
-    return this.prisma.user.findUniqueOrThrow({
+    this.logger.debug(`[AuthService] getMe start for ${userId}`)
+    const start = Date.now()
+    const result = await this.prisma.user.findUniqueOrThrow({
       where:  { id: userId },
       select: {
         id:            true,
@@ -314,6 +316,8 @@ export class AuthService {
         },
       },
     })
+    this.logger.debug(`[AuthService] getMe end for ${userId} in ${Date.now() - start}ms`)
+    return result
   }
 
   // ══════════════════════════════════════════════════════════════════════════

@@ -1,15 +1,27 @@
 // src/pages/dashboard-alumno/+Page.tsx
 import '../../index.css'
-import { useState, useEffect } from 'react'
-import { api, ApiError }         from '../../lib/api'
-import { useRequireRole }        from '../../hooks/useRequireRole'
-import { PageLoader }            from '../../components/LoadingSpinner'
-import { ErrorBanner }           from '../../components/ErrorBanner'
+import React, { useState, useEffect } from 'react'
+import { api }                   from '../../lib/api'
+import { useAuth }                from '../../context/AuthContext'
+import { useRequireRole }         from '../../hooks/useRequireRole'
+import { PageLoader }             from '../../components/LoadingSpinner'
+import { ErrorBanner }            from '../../components/ErrorBanner'
+import { WeeklyCalendar }         from '../../components/WeeklyCalendar'
+import { DashboardLayout }        from '../../components/DashboardLayout'
+import { PrintableSchedule }      from '../../components/PrintableSchedule'
+
+const ALUMNO_TABS = [
+  { id: 'home',     label: 'Mi Curso',   icon: '' },
+  { id: 'progress', label: 'Mi Progreso', icon: '' },
+  { id: 'history',  label: 'Historial',  icon: '' },
+  { id: 'payments', label: 'Pagos',      icon: '' },
+]
 
 const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
 export default function DashboardAlumno() {
   const { user } = useRequireRole('STUDENT')
+  const [activeTab, setActiveTab] = useState('home')
 
   const [enrollments, setEnrollments] = useState<any[]>([])
   const [payments,    setPayments]    = useState<any[]>([])
@@ -25,11 +37,10 @@ export default function DashboardAlumno() {
           api.enrollments.getMy(),
           api.payments.getMy(),
         ])
-        setEnrollments(enrollData)
-        setPayments(payData)
-      } catch (err) {
-        if (err instanceof ApiError) setError(err.message)
-        else setError('Error al cargar tus inscripciones.')
+        setEnrollments(Array.isArray(enrollData) ? enrollData : (enrollData as any)?.data || [])
+        setPayments(Array.isArray(payData) ? payData : (payData as any)?.data || [])
+      } catch (err: any) {
+        setError(err.message || 'Error al cargar datos')
       } finally {
         setLoading(false)
       }
@@ -37,269 +48,268 @@ export default function DashboardAlumno() {
     load()
   }, [user])
 
-  if (!user) return null   // will redirect
-
-  const active        = enrollments.find((e: any) => e.status === 'ACTIVE')
-  const pendingPay    = enrollments.find((e: any) => e.status === 'PENDING_PAYMENT')
-  const history       = enrollments.filter((e: any) => ['COMPLETED', 'DROPPED', 'EXPELLED'].includes(e.status))
-  const completedLvls = enrollments.filter((e: any) => e.status === 'COMPLETED').map((e: any) => e.course?.level)
-
-  const handleLogout = async () => {
-    await api.auth.logout()
-    window.location.href = '/login'
-  }
-
+  const { isLoading: sessionLoading } = useAuth()
+  if (sessionLoading) return <PageLoader message="Verificando sesión..." />
+  if (!user) return null
   if (loading) return <PageLoader message="Cargando tu dashboard..." />
 
+  const active        = Array.isArray(enrollments) ? enrollments.find((e: any) => e.status === 'ACTIVE') : null
+  const pendingPay    = Array.isArray(enrollments) ? enrollments.find((e: any) => e.status === 'PENDING_PAYMENT') : null
+  const history       = Array.isArray(enrollments) ? enrollments.filter((e: any) => ['COMPLETED', 'DROPPED', 'EXPELLED'].includes(e.status)) : []
+  
+  const completedLvls = Array.isArray(enrollments) 
+    ? enrollments
+        .filter((e: any) => e.status === 'COMPLETED' && e.course?.languageId === active?.course?.languageId)
+        .map((e: any) => e.course?.level)
+    : []
+
   return (
-    <div className="min-h-screen flex flex-col bg-gray-100">
-
-      {/* Navbar */}
-      <nav className="bg-green-800 text-white px-6 py-3 flex justify-between items-center shadow-md">
-        <span className="font-bold text-lg">TESH — Mi Cuenta</span>
-        <div className="flex items-center gap-4">
-          <span className="text-green-200 text-sm">
-            {user.firstName} {user.lastName}
-          </span>
-          <button
-            onClick={handleLogout}
-            className="bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-4 py-2 rounded transition-colors"
-          >
-            Cerrar Sesión
-          </button>
-        </div>
-      </nav>
-
-      <div className="p-6 max-w-5xl mx-auto w-full space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <h2 className="text-xl font-bold text-gray-800">
-            Bienvenido(a), {user.firstName}
-          </h2>
-          {!active && !pendingPay && (
-            <a
-              href="/catalogo"
-              className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-5 py-2.5 rounded-lg transition-colors shadow-sm whitespace-nowrap"
-            >
-              + Inscribirse a Nuevo Curso
-            </a>
-          )}
-        </div>
-
+    <DashboardLayout
+      user={user}
+      activeTab={activeTab}
+      setActiveTab={setActiveTab}
+      tabs={ALUMNO_TABS}
+      title="Mi Portal TeshLex"
+    >
+      <div className="space-y-6">
         {error && <ErrorBanner message={error} onRetry={() => window.location.reload()} />}
 
-        {/* Pago pendiente */}
+        {/* ── Pending Payment Alert ────────────────── */}
         {pendingPay && (
-          <div className="bg-orange-50 border border-orange-300 rounded-xl p-4 flex items-center justify-between">
+          <div className="bg-orange-600 p-6 rounded-2xl text-white shadow-xl shadow-orange-500/20 flex flex-col md:flex-row items-center justify-between gap-4 animate-bounce-slow">
             <div>
-              <p className="font-semibold text-orange-800 text-sm">Tienes una inscripción pendiente de pago</p>
-              <p className="text-orange-600 text-sm">
-                {pendingPay.course?.language?.name} — {pendingPay.course?.level}
-              </p>
+              <p className="font-bold text-lg uppercase tracking-tight">Inscripción pendiente de pago</p>
+              <p className="text-orange-100 font-medium">{pendingPay.course?.language?.name} — {pendingPay.course?.level}</p>
             </div>
-            <a
-              href={`/pago?enrollmentId=${pendingPay.id}`}
-              className="bg-orange-500 hover:bg-orange-600 text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors"
-            >
-              Ir a Pagar
+            <a href={`/pago?enrollmentId=${pendingPay.id}`} className="bg-white text-orange-600 font-black px-8 py-3 rounded-xl hover:bg-orange-50 transition-all uppercase text-sm">
+              Completar Pago
             </a>
           </div>
         )}
 
-        {/* Info + Horario */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-xl shadow-sm p-5">
-            <h3 className="text-green-700 font-bold text-lg mb-3">Información General</h3>
-            <div className="space-y-1.5 text-sm text-gray-700">
-              <p><span className="font-semibold">Nombre:</span> {user.lastName} {user.firstName}</p>
-              <p><span className="font-semibold">Email:</span> {user.email}</p>
-              <p><span className="font-semibold">Rol:</span> Alumno</p>
-              {active && (
-                <>
-                  <p><span className="font-semibold">Idioma:</span> {active.course?.language?.name}</p>
-                  <p><span className="font-semibold">Nivel Actual:</span>{' '}
-                    <span className="text-blue-600 font-bold">{active.course?.level}</span>
-                  </p>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm p-5">
-            <h3 className="text-green-700 font-bold text-lg mb-3">Inscripción Activa</h3>
-            {active ? (
-              <div className="space-y-1.5 text-sm text-gray-700">
-                {active.course?.schedule && (
-                  <p><span className="font-semibold">Horario:</span> {active.course.schedule}</p>
-                )}
-                {active.course?.teacher && (
-                  <p><span className="font-semibold">Profesor:</span>{' '}
-                    {active.course.teacher.user?.firstName} {active.course.teacher.user?.lastName}
-                  </p>
-                )}
-                {active.grades && active.grades[0] != null && (
-                  <p><span className="font-semibold">Calificación parcial:</span>{' '}
-                    <span className={active.grades[0] < 7 ? 'text-red-600 font-bold' : 'text-green-600 font-bold'}>
-                      {active.grades[0]}
-                    </span>
-                  </p>
-                )}
-                <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 mt-2">
-                  <p className="text-xs text-green-700 font-semibold">✅ Sin adeudos pendientes</p>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400 italic">Sin inscripción activa en este momento.</p>
-            )}
-          </div>
-        </div>
-
-        {/* Progreso de niveles */}
-        <div className="bg-white rounded-xl shadow-sm p-5">
-          <h3 className="text-green-700 font-bold text-lg mb-4">Progreso de Niveles</h3>
-          <div className="flex items-center gap-2 flex-wrap">
-            {LEVELS.map(lvl => {
-              const done    = completedLvls.includes(lvl)
-              const current = active?.course?.level === lvl
-              return (
-                <div key={lvl} className="flex items-center gap-1.5">
-                  <div className={`
-                    w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold border-2
-                    ${done    ? 'bg-green-600 border-green-600 text-white' : ''}
-                    ${current ? 'bg-blue-600 border-blue-600 text-white' : ''}
-                    ${!done && !current ? 'bg-gray-100 border-gray-300 text-gray-400' : ''}
-                  `}>
-                    {lvl}
+        {/* ── Home Tab (Active Course & Calendar) ──── */}
+        {activeTab === 'home' && (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Active course details */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between">
+                  <div>
+                    <div className="flex justify-between items-start mb-6">
+                      <div>
+                        <h3 className="text-2xl font-bold text-gray-800 uppercase tracking-tight">{active?.course?.language?.name || 'Inscripción'}</h3>
+                        <p className="text-blue-600 font-bold text-lg">{active?.course?.level || 'Nivel —'}</p>
+                      </div>
+                    <span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-tight italic">Activo</span>
                   </div>
-                  {lvl !== 'C2' && (
-                    <div className={`w-6 h-0.5 ${done ? 'bg-green-400' : 'bg-gray-200'}`} />
+
+                  {active ? (
+                    <div className="space-y-4">
+                       <div className="bg-gray-50 p-4 rounded-xl space-y-2 border border-gray-100">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Horario & Aula</p>
+                        <p className="text-sm font-bold text-gray-700">Horario: {active.course.scheduleDescription}</p>
+                        <p className="text-sm font-bold text-gray-700">Aula: {active.course.classroom || 'Por confirmar'}</p>
+                      </div>
+                      
+                      {active.course.teacher && (
+                        <div className="flex items-center gap-3">
+                           <div className="h-10 w-10 bg-slate-900 text-white flex items-center justify-center rounded-full font-black text-xs">
+                             {active.course.teacher.user?.firstName[0]}
+                           </div>
+                           <div>
+                             <p className="text-[10px] font-black text-slate-400 uppercase">Profesor(a)</p>
+                             <p className="text-sm font-bold text-slate-700">{active.course.teacher.user?.firstName} {active.course.teacher.user?.lastName}</p>
+                           </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="py-8 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                       <p className="text-slate-400 font-medium mb-4 italic">No tienes un curso activo</p>
+                       <a href="/catalogo" className="bg-slate-900 text-white px-6 py-2 rounded-xl text-xs font-black uppercase">Ver Catálogo</a>
+                    </div>
                   )}
                 </div>
-              )
-            })}
-          </div>
-          <div className="flex gap-4 mt-3 text-xs text-gray-500">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-green-600 inline-block" />Completado</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-blue-600 inline-block" />En curso</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-gray-200 inline-block" />Pendiente</span>
-          </div>
-        </div>
 
-        {/* Historial Académico */}
-        <div className="bg-white rounded-xl shadow-sm p-5">
-          <h3 className="text-green-700 font-bold text-lg mb-4">Historial Académico</h3>
-          {history.length === 0 ? (
-            <p className="text-sm text-gray-400 italic">Aún no tienes cursos completados.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Idioma / Nivel</th>
-                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Calificación</th>
-                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Estado</th>
-                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Boleta</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((e: any) => {
-                    const docs     = e.documents ?? []
-                    const boleta   = docs.find((d: any) => d.type === 'GRADE_REPORT' && d.status === 'RELEASED')
-                    const approved = e.finalGrade != null && e.finalGrade >= 7
-                    return (
-                      <tr key={e.id} className="border-b border-gray-100">
-                        <td className="py-2 px-3 text-gray-700">
-                          {e.course?.language?.name} — {e.course?.level}
+                {active?.course?.meetingLink && (
+                  <a 
+                    href={active.course.meetingLink} target="_blank" rel="noreferrer" 
+                    className="mt-8 w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-all text-center flex items-center justify-center gap-2 shadow-md uppercase text-xs tracking-wide"
+                  >
+                    Unirse a Sesión Virtual
+                  </a>
+                )}
+              </div>
+
+              {/* General info or stats could go here, for now a "Tips" card or similar */}
+              {/* Financial info */}
+              <div className="bg-gray-800 text-white p-6 rounded-xl shadow-md flex flex-col justify-center no-print">
+                 <p className="text-blue-400 font-bold text-xs uppercase mb-1 tracking-widest">Estado de Cuenta</p>
+                 <h4 className="text-3xl font-bold mb-4">$0.00</h4>
+                 <p className="text-gray-400 text-xs font-medium">No tiene adeudos pendientes.</p>
+                 <div className="mt-8 pt-6 border-t border-gray-700 flex gap-3">
+                    <button 
+                      onClick={() => window.print()} 
+                      className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-[10px] font-bold uppercase transition-all"
+                    >
+                      Descargar Horario (PDF)
+                    </button>
+                    <a href="/costos" className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-[10px] font-bold uppercase transition-all">Tarifario</a>
+                 </div>
+              </div>
+            </div>
+
+            {/* Calendar */}
+            {active && (
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 className="text-lg font-bold text-gray-800 mb-6 uppercase tracking-tight">
+                   Calendario de Sesiones
+                </h3>
+                <WeeklyCalendar 
+                  courses={[active.course].map(c => ({
+                    ...c,
+                    color: c?.language?.name?.toLowerCase().includes('inglés') ? 'bg-indigo-100 border-indigo-300 text-indigo-800' : 
+                           c?.language?.name?.toLowerCase().includes('francés') ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-green-100 border-green-300 text-green-800'
+                  }))}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Progress Tab ────────────────────────── */}
+        {activeTab === 'progress' && (
+          <div className="bg-white p-10 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <h3 className="text-2xl font-bold text-gray-800 mb-2">Mi Mapa Curricular</h3>
+            <p className="text-gray-500 mb-10 font-medium">Idioma: {active?.course?.language?.name || 'Varios'}</p>
+
+            <div className="flex items-center gap-4 flex-wrap justify-center py-8">
+              {LEVELS.map((lvl, idx) => {
+                const done    = completedLvls.includes(lvl)
+                const current = active?.course?.level === lvl
+                return (
+                  <React.Fragment key={lvl}>
+                    <div className="relative group">
+                       <div className={`
+                        w-16 h-16 rounded-xl flex items-center justify-center text-lg font-bold transition-all border-4 relative z-10
+                        ${done    ? 'bg-green-500 border-green-500 text-white shadow-lg shadow-green-500/20' : ''}
+                        ${current ? 'bg-blue-600 border-blue-600 text-white shadow-xl shadow-blue-500/30 scale-110' : ''}
+                        ${!done && !current ? 'bg-gray-100 border-gray-200 text-gray-400' : ''}
+                      `}>
+                        {lvl}
+                      </div>
+                      {current && (
+                        <div className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 rounded-full border-2 border-white animate-ping"></div>
+                      )}
+                    </div>
+                    {idx < LEVELS.length - 1 && (
+                      <div className={`h-1 w-8 rounded-full ${done ? 'bg-green-400' : 'bg-gray-100'}`} />
+                    )}
+                  </React.Fragment>
+                )
+              })}
+            </div>
+            
+            <div className="mt-12 p-6 bg-gray-50 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-4 text-center border border-gray-100">
+               <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Niveles Aprobados</p>
+                  <p className="text-2xl font-bold text-gray-800">{completedLvls.length}</p>
+               </div>
+               <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Estatus Actual</p>
+                  <p className="text-sm font-bold text-blue-600">{active ? 'ESTUDIANDO' : 'INACTIVO'}</p>
+               </div>
+               <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Próxima Certificación</p>
+                  <p className="text-sm font-bold text-gray-800">{active?.course?.level === 'C2' ? 'MAESTRÍA' : 'Nivel Superior'}</p>
+               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── History Tab ─────────────────────────── */}
+        {activeTab === 'history' && (
+          <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <h3 className="text-xl font-bold text-gray-800 mb-6 uppercase tracking-tight">Historial Académico</h3>
+            {history.length === 0 ? (
+              <div className="text-center py-20 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
+                <p className="text-gray-400 font-medium italic">Tu historial aparecerá aquí cuando completes niveles</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4">
+                {history.map((e: any) => {
+                  const boleta   = e.documents?.find((d: any) => d.type === 'GRADE_REPORT' && d.status === 'RELEASED')
+                  const approved = e.finalGrade != null && e.finalGrade >= 7
+                  return (
+                    <div key={e.id} className="p-6 border border-gray-100 rounded-xl hover:bg-gray-50 transition-all flex items-center justify-between">
+                      <div className="space-y-1">
+                        <p className="font-bold text-gray-800">{e.course?.language?.name} — {e.course?.level}</p>
+                        <p className="text-xs font-bold text-gray-400 uppercase">Finalizado el {new Date(e.updatedAt).toLocaleDateString('es-MX')}</p>
+                      </div>
+                      <div className="flex items-center gap-6">
+                        <div className="text-right">
+                           <p className="text-[10px] font-bold text-gray-400 uppercase">Calificación</p>
+                           <p className={`text-xl font-bold ${approved ? 'text-green-600' : 'text-red-500'}`}>{e.finalGrade ?? '-'}</p>
+                        </div>
+                        {boleta ? (
+                          <a href={boleta.fileUrl} target="_blank" rel="noreferrer" className="bg-blue-100 text-blue-600 hover:bg-blue-600 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all uppercase">
+                            Descargar Boleta
+                          </a>
+                        ) : (
+                          <span className="bg-gray-100 text-gray-400 px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-tight">En Revisión</span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Payments Tab ────────────────────────── */}
+        {activeTab === 'payments' && (
+          <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <h3 className="text-xl font-bold text-gray-800 mb-6 uppercase tracking-tight">Registro de Transacciones</h3>
+            {payments.length === 0 ? (
+              <p className="text-center py-20 text-gray-400 italic">No tienes pagos registrados aún</p>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-gray-100">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="text-left p-4 font-bold text-gray-500 uppercase tracking-tighter">Descripción</th>
+                      <th className="text-center p-4 font-bold text-gray-500 uppercase tracking-tighter">Monto</th>
+                      <th className="text-right p-4 font-bold text-gray-500 uppercase tracking-tighter">Fecha & Estatus</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {payments.map((p: any) => (
+                      <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-4 font-bold text-gray-700">
+                          {p.enrollment?.course ? `${p.enrollment.course.language?.name} ${p.enrollment.course.level}` : p.description}
                         </td>
-                        <td className="py-2 px-3">
-                          {e.finalGrade != null ? (
-                            <span className={`font-bold ${approved ? 'text-green-600' : 'text-red-600'}`}>
-                              {e.finalGrade}
-                            </span>
-                          ) : '—'}
-                        </td>
-                        <td className="py-2 px-3">
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                            e.status === 'COMPLETED' ? (approved ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700')
-                              : 'bg-gray-100 text-gray-600'
+                        <td className="p-4 text-center font-bold text-gray-900">${Number(p.amount).toLocaleString('es-MX')}</td>
+                        <td className="p-4 text-right">
+                          <p className="text-[10px] font-bold text-gray-400">{new Date(p.createdAt).toLocaleDateString('es-MX')}</p>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            p.status === 'APPROVED' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
                           }`}>
-                            {e.status === 'COMPLETED' ? (approved ? 'Aprobado' : 'Reprobado') : e.status}
+                            {p.status}
                           </span>
                         </td>
-                        <td className="py-2 px-3">
-                          {boleta ? (
-                            <a href={boleta.fileUrl ?? '#'} target="_blank" rel="noreferrer"
-                              className="text-blue-600 hover:underline text-xs font-medium">
-                              Descargar
-                            </a>
-                          ) : (
-                            <span className="text-gray-400 text-xs">No disponible</span>
-                          )}
-                        </td>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        {/* Mis Pagos */}
-        <div className="bg-white rounded-xl shadow-sm p-5">
-          <h3 className="text-green-700 font-bold text-lg mb-4">Mis Pagos</h3>
-          {payments.length === 0 ? (
-            <p className="text-sm text-gray-400 italic">No hay registros de pago.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Curso</th>
-                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Monto</th>
-                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Fecha</th>
-                    <th className="text-left py-2 px-3 text-gray-600 font-semibold">Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {payments.map((p: any) => {
-                    const c = p.enrollment?.course
-                    const courseName = c ? `${c.language?.name} — ${c.level}` : p.description
-                    let badgeClass = 'bg-gray-100 text-gray-600'
-                    if (p.status === 'APPROVED') badgeClass = 'bg-green-100 text-green-700'
-                    if (p.status === 'PENDING')  badgeClass = 'bg-yellow-100 text-yellow-700'
-                    if (p.status === 'REJECTED') badgeClass = 'bg-red-100 text-red-700'
-                    
-                    return (
-                      <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-2 px-3 text-gray-700 font-medium">{courseName}</td>
-                        <td className="py-2 px-3 text-gray-700 font-bold">${Number(p.amount).toLocaleString('es-MX')}</td>
-                        <td className="py-2 px-3 text-gray-500">{new Date(p.createdAt).toLocaleDateString('es-MX')}</td>
-                        <td className="py-2 px-3">
-                           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${badgeClass}`}>
-                             {p.status}
-                           </span>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        {/* Observaciones del Profesor */}
-        {active?.teacherComments && active.teacherComments.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm p-5">
-            <h3 className="text-green-700 font-bold text-lg mb-3">Observaciones del Profesor</h3>
-            {active.teacherComments.map((c: any) => (
-              <p key={c.id} className="text-sm text-gray-600 italic border-l-2 border-green-300 pl-3 py-1">
-                "{c.message}"
-              </p>
-            ))}
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
-    </div>
+
+      {/* Hidden component for formal PDF generation */}
+      <PrintableSchedule enrollment={active} />
+    </DashboardLayout>
   )
 }
+

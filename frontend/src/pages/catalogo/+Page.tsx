@@ -1,18 +1,21 @@
 // src/pages/catalogo/+Page.tsx
 import '../../index.css'
 import { useState, useEffect } from 'react'
-import { api, ApiError, tokenStore } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
+import { useAuth } from '../../context/AuthContext'
 import { PageLoader } from '../../components/LoadingSpinner'
 import { ErrorBanner } from '../../components/ErrorBanner'
 
 export default function CatalogoPage() {
-  const session = tokenStore.getSession()
+  const { user: session, isLoading } = useAuth()
   
   const [courses, setCourses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
+    if (isLoading) return
+
     if (!session || session.role !== 'STUDENT') {
       window.location.href = '/login'
       return
@@ -30,9 +33,9 @@ export default function CatalogoPage() {
       }
     }
     load()
-  }, [])
+  }, [session, isLoading])
 
-  if (loading) return <PageLoader message="Cargando catálogo de cursos..." />
+  if (loading || isLoading) return <PageLoader message="Cargando catálogo de cursos..." />
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -78,6 +81,17 @@ export default function CatalogoPage() {
                       </svg>
                       {course.scheduleDescription} ({course.startTime} - {course.endTime})
                     </div>
+                    {(course.classroom || course.meetingLink) && (
+                      <div className="flex items-center text-gray-600 text-sm mt-1">
+                        <svg className="w-5 h-5 mr-2 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        {course.classroom ? `Salón: ${course.classroom}` : ''}
+                        {course.classroom && course.meetingLink && ' | '}
+                        {course.meetingLink ? <span className="text-indigo-600 font-semibold px-1 bg-indigo-50 rounded">Virtual</span> : ''}
+                      </div>
+                    )}
                     <div className="flex items-center text-gray-600 text-sm">
                       <svg className="w-5 h-5 mr-2 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />

@@ -21,8 +21,16 @@ export class CreateCycleDto {
   @IsString()
   endDate: string
 
-  @ApiPropertyOptional({ example: false })
-  @IsOptional()
   @IsBoolean()
   isActive?: boolean
+
+  @ApiPropertyOptional({ example: '2025-07-01' })
+  @IsOptional()
+  @IsString()
+  enrollmentStart?: string
+
+  @ApiPropertyOptional({ example: '2025-08-15' })
+  @IsOptional()
+  @IsString()
+  enrollmentEnd?: string
 }

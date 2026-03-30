@@ -1,14 +1,18 @@
 // src/pages/pago/+Page.tsx
 import '../../index.css'
 import { useState, useEffect } from 'react'
-import { api, ApiError, tokenStore } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
+import { useAuth } from '../../context/AuthContext'
 import { ButtonSpinner, PageLoader } from '../../components/LoadingSpinner'
 import { ErrorBanner }               from '../../components/ErrorBanner'
 
 import { initMercadoPago, Wallet } from '@mercadopago/sdk-react'
 
 // Inicializar MercadoPago
-initMercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY || 'TEST-1234', { locale: 'es-MX' })
+const mpPublicKey = import.meta.env.VITE_MP_PUBLIC_KEY
+if (!mpPublicKey) throw new Error("Llave pública MP bloqueada / no configurada en Frontend")
+
+initMercadoPago(mpPublicKey, { locale: 'es-MX' })
 
 // ─── Componente del Checkout MP ──────────────────────────────────────────────
 function CheckoutForm({ preferenceId }: { preferenceId: string }) {
@@ -23,8 +27,9 @@ function CheckoutForm({ preferenceId }: { preferenceId: string }) {
 export default function PagoPage() {
   const params       = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
   const courseId     = params.get('courseId')
+  const enrollmentId = params.get('enrollmentId')
   
-  const session = tokenStore.getSession()
+  const { user: session, isLoading: isAuthLoading } = useAuth()
 
   const [initLoading, setInitLoading] = useState(false)
   const [error, setError]             = useState('')
@@ -33,6 +38,7 @@ export default function PagoPage() {
 
   // ── Pre-enroll + get preference if coming fresh ──
   useEffect(() => {
+    if (isAuthLoading) return
     if (!session) {
       window.location.href = '/login'
       return
@@ -48,7 +54,14 @@ export default function PagoPage() {
       try {
         // Obtenemos una inscripción PENDING_PAYMENT
         const enrollments = await api.enrollments.getMy()
-        let pending = enrollments.find((e: any) => e.status === 'PENDING_PAYMENT')
+        let pending = undefined
+
+        // Si la URL trajo un ID específico, lo priorizamos
+        if (enrollmentId) {
+          pending = enrollments.find((e: any) => e.id === enrollmentId)
+        } else {
+          pending = enrollments.find((e: any) => e.status === 'PENDING_PAYMENT')
+        }
 
         // Si se envió un courseId y no hay inscripción, creamos (pre-inscripción)
         if (!pending && courseId) {

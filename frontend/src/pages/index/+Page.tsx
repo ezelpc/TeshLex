@@ -1,7 +1,8 @@
 // src/pages/index/+Page.tsx
 import '../../index.css'
 import { useState, useEffect } from 'react'
-import { api, tokenStore }     from '../../lib/api'
+import { api }                 from '../../lib/api'
+import { useAuth }             from '../../context/AuthContext'
 import { PageLoader }          from '../../components/LoadingSpinner'
 import { ErrorBanner }         from '../../components/ErrorBanner'
 
@@ -12,7 +13,7 @@ export default function LandingPage() {
   const [loading, setLoading]    = useState(true)
   const [error,   setError]      = useState('')
 
-  const session = tokenStore.getSession()
+  const { user: session, isLoading: isAuthLoading } = useAuth()
 
   useEffect(() => {
     const load = async () => {
@@ -127,7 +128,7 @@ export default function LandingPage() {
           </div>
         )}
 
-        {loading ? (
+        {loading || isAuthLoading ? (
           <div className="py-12"><PageLoader message="Cargando cursos..." /></div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-12 text-gray-400">

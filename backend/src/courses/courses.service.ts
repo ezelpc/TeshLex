@@ -30,6 +30,7 @@ export class CoursesService {
     cycleId?:    string
   }) {
     return this.prisma.course.findMany({
+      take: 500, // DoS Mitigation
       where: {
         ...(filters?.languageId && { languageId: filters.languageId }),
         ...(filters?.level      && { level:      filters.level }),
@@ -315,6 +316,22 @@ export class CoursesService {
     ])
 
     this.logger.log(`Ciclo activado: ${cycle.name}`)
-    return this.prisma.schoolCycle.findUnique({ where: { id } })
+    return this.prisma.schoolCycle.findUnique({ where: { id: id } })
+  }
+
+  async updateCycle(id: string, dto: Partial<CreateCycleDto>) {
+    const cycle = await this.prisma.schoolCycle.findUnique({ where: { id } })
+    if (!cycle) throw new NotFoundException('Ciclo escolar no encontrado')
+
+    return this.prisma.schoolCycle.update({
+      where: { id },
+      data: {
+        ...dto,
+        ...(dto.startDate && { startDate: new Date(dto.startDate) }),
+        ...(dto.endDate && { endDate: new Date(dto.endDate) }),
+        ...(dto.enrollmentStart && { enrollmentStart: new Date(dto.enrollmentStart) }),
+        ...(dto.enrollmentEnd && { enrollmentEnd: new Date(dto.enrollmentEnd) }),
+      } as any,
+    })
   }
 }

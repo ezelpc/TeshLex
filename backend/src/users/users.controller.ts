@@ -19,6 +19,14 @@ import { RolesGuard }          from '../common/guards/roles.guard'
 import { Roles }               from '../common/decorators/roles.decorator'
 import { CurrentUser }         from '../common/decorators/current-user.decorator'
 
+export interface JwtPayload {
+  id: string
+  email: string
+  role: Role
+  studentProfileId?: string
+  teacherProfileId?: string
+}
+
 @ApiTags('Users')
 @Controller('users')
 export class UsersController {
@@ -40,7 +48,7 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-Auth')
   @ApiOperation({ summary: 'Ver mi perfil completo con historial' })
-  getMe(@CurrentUser() user: any) {
+  getMe(@CurrentUser() user: JwtPayload) {
     return this.usersService.findOne(user.id)
   }
 
@@ -52,7 +60,7 @@ export class UsersController {
     summary:     'Actualizar mi perfil',
     description: 'El usuario puede actualizar: firstName, lastName, phone, avatarUrl.',
   })
-  updateMe(@CurrentUser() user: any, @Body() dto: UpdateUserDto) {
+  updateMe(@CurrentUser() user: JwtPayload, @Body() dto: UpdateUserDto) {
     return this.usersService.updateMe(user.id, dto)
   }
 
@@ -94,10 +102,10 @@ export class UsersController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: '[Profesor] Enviar comentario al administrador' })
   sendComment(
-    @CurrentUser() user: any,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: TeacherCommentDto,
   ) {
-    return this.usersService.sendTeacherComment(user.teacherProfileId, dto.message)
+    return this.usersService.sendTeacherComment(user.teacherProfileId!, dto.message)
   }
 
   // ── GET /api/users — Admin ───────────────────────────────────────────────

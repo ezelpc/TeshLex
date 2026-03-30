@@ -1,4 +1,4 @@
-// src/main.ts
+// src/main.ts (DIAGNOSTIC RELOAD)
 import './dns-fix'
 import { NestFactory }    from '@nestjs/core'
 import { ValidationPipe, Logger } from '@nestjs/common'

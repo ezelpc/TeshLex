@@ -1,8 +1,9 @@
 // src/payments/payments.controller.ts
 import {
-  Controller, Get, Post, Param, Body, Query,
-  UseGuards, HttpCode, HttpStatus, Req,
+  Controller, Get, Post, Param, Body, Query, Headers,
+  UseGuards, HttpCode, HttpStatus, Req, UnauthorizedException
 } from '@nestjs/common'
+import * as crypto from 'crypto'
 import {
   ApiTags, ApiOperation, ApiBearerAuth,
   ApiQuery, ApiParam,
@@ -11,6 +12,7 @@ import { SkipThrottle }        from '@nestjs/throttler'
 import { Role, PaymentStatus } from '@prisma/client'
 import { PaymentsService }     from './payments.service'
 import { CreatePreferenceDto } from './dto/create-preference.dto'
+import { PaginationDto }       from '../common/dto/pagination.dto'
 import { JwtAuthGuard }        from '../common/guards/jwt-auth.guard'
 import { RolesGuard }          from '../common/guards/roles.guard'
 import { Roles }               from '../common/decorators/roles.decorator'
@@ -47,7 +49,34 @@ export class PaymentsController {
     summary:     '[MercadoPago] Webhook IPN (sin autenticación JWT)',
     description: 'Procesa notificaciones de pagos de MercadoPago.',
   })
-  async webhook(@Body() body: any) {
+  async webhook(
+    @Body() body: any,
+    @Headers('x-signature') xSignature: string,
+    @Headers('x-request-id') xRequestId: string,
+    @Query('data.id') dataId: string,
+  ) {
+    if (!xSignature || !xRequestId || !dataId) {
+      throw new UnauthorizedException('Request Headers incompletos para webhook')
+    }
+
+    // 1. Extraer timestamp(ts) y hash(v1)
+    const { ts, v1: hash } = xSignature.split(',').reduce((acc, part) => {
+      const [k, v] = part.split('=')
+      acc[k] = v
+      return acc
+    }, {} as Record<string, string>)
+
+    if (!ts || !hash) throw new UnauthorizedException('Firma de webhook inválida')
+
+    // 2. Hash HMAC-SHA256 Manifest
+    const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts}`
+    const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET || ''
+    const expectedHash = crypto.createHmac('sha256', secret).update(manifest).digest('hex')
+
+    if (hash !== expectedHash) {
+      throw new UnauthorizedException('Firma HMAC MercadoPago no superada')
+    }
+
     return this.paymentsService.handleWebhook(body)
   }
 
@@ -67,8 +96,8 @@ export class PaymentsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-Auth')
   @ApiOperation({ summary: '[Alumno] Mis pagos' })
-  findMyPayments(@CurrentUser() user: any) {
-    return this.paymentsService.findMyPayments(user.studentProfileId)
+  findMyPayments(@CurrentUser() user: any, @Query() paginationDto: PaginationDto) {
+    return this.paymentsService.findMyPayments(user.studentProfileId, paginationDto)
   }
 
   // ── GET /api/payments — Admin lista todos los pagos ──────────────────────

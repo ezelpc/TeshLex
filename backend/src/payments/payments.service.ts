@@ -10,6 +10,7 @@ import { PrismaService }        from '../prisma/prisma.service'
 import { NotificationsService } from '../notifications/notifications.service'
 import { EnrollmentsService }   from '../enrollments/enrollments.service'
 import { PaymentStatus, PaymentType } from '@prisma/client'
+import { PaginationDto }        from '../common/dto/pagination.dto'
 
 @Injectable()
 export class PaymentsService {
@@ -61,11 +62,25 @@ export class PaymentsService {
 
     const course   = enrollment.course as any
     const language = course.language   as any
-    const user     = enrollment.student.user as any
+    const student  = enrollment.student as any
+    const user     = student.user as any
     const title    = `${language.name} ${course.level} — TESH`
-    const rawPrice = course.price?.toString() || course.enrollmentFee?.toString() || '1500'
-    let amount   = Number(rawPrice)
+    
+    // Determinar precio según categoría del alumno
+    let amount = 1500
+    const category = student.category || 'EXTERNAL'
+    const config = course.pricingConfig as Record<string, number> | null
+    
+    if (config && config[category] !== undefined) {
+      amount = Number(config[category])
+    } else {
+      // Fallback a precios estáticos previos si no hay config JSON
+      const rawPrice = course.price?.toString() || course.enrollmentFee?.toString() || '1500'
+      amount = Number(rawPrice)
+    }
+
     if (isNaN(amount) || amount <= 0) amount = 1500
+
 
     // Check if we already have a pending Payment for this enrollment
     let payment = await this.prisma.payment.findFirst({
@@ -93,7 +108,8 @@ export class PaymentsService {
             },
           ],
           payer: {
-            email: 'test_user_1234@testuser.com', // Email genérico para evitar cruces con cuentas reales
+            // Email genérico en desarrollo, email real del estudiante en producción
+            email: process.env.NODE_ENV === 'production' ? user.email : (process.env.MERCADOPAGO_TEST_EMAIL || 'test_user_1234@testuser.com'),
           },
           back_urls: {
             success: `${this.frontendUrl}/pago/exitoso`,
@@ -238,14 +254,29 @@ export class PaymentsService {
   // CONSULTAS
   // ══════════════════════════════════════════════════════════════════════════
 
-  async findMyPayments(studentProfileId: string) {
-    return this.prisma.payment.findMany({
-      where:   { studentId: studentProfileId },
-      include: {
-        enrollment: { include: { course: { include: { language: true } } } },
-      },
-      orderBy: { createdAt: 'desc' },
-    })
+  async findMyPayments(studentProfileId: string, pagination: PaginationDto = {}) {
+    const { page = 1, limit = 10 } = pagination
+    const skip = (page - 1) * limit
+
+    const [data, total] = await Promise.all([
+      this.prisma.payment.findMany({
+        where:   { studentId: studentProfileId },
+        include: {
+          enrollment: { include: { course: { include: { language: true } } } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.payment.count({ where: { studentId: studentProfileId } })
+    ])
+
+    return {
+      data,
+      total,
+      page,
+      lastPage: Math.ceil(total / limit) || 1
+    }
   }
 
   async findOne(id: string) {

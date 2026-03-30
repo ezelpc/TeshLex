@@ -1,14 +1,15 @@
 // src/auth/auth.controller.ts
 import {
-  Controller, Post, Get, Body, Req,
+  Controller, Post, Get, Body, Req, Res,
   UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common'
 import {
   ApiTags, ApiOperation, ApiResponse,
   ApiBearerAuth, ApiBody,
 } from '@nestjs/swagger'
-// FIX: import type para evitar error TS1272 con isolatedModules + emitDecoratorMetadata
-import type { Request } from 'express'
+import type { Request, Response } from 'express'
+import { Throttle } from '@nestjs/throttler'
+import { LoginThrottlerGuard } from './guards/login-throttler.guard'
 import { AuthService }       from './auth.service'
 import { LoginDto }          from './dto/login.dto'
 import { RefreshDto }        from './dto/refresh.dto'
@@ -21,19 +22,30 @@ import { CurrentUser }       from '../common/decorators/current-user.decorator'
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  private setCookies(res: Response, accessToken: string, refreshToken: string) {
+    const isProd = process.env.NODE_ENV === 'production'
+    const opts = { httpOnly: true, secure: isProd, sameSite: 'strict' as const, path: '/' }
+    res.cookie('accessToken', accessToken, { ...opts, maxAge: 15 * 60 * 1000 })
+    res.cookie('refreshToken', refreshToken, { ...opts, maxAge: 7 * 24 * 60 * 60 * 1000 })
+  }
+
   @Post('login')
+  @UseGuards(LoginThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Iniciar sesión — retorna accessToken + refreshToken' })
   @ApiResponse({ status: 200, description: 'Login exitoso' })
   @ApiResponse({ status: 401, description: 'Credenciales incorrectas' })
   @ApiBody({ type: LoginDto })
-  login(@Body() dto: LoginDto, @Req() req: Request) {
-    return this.authService.login(
+  async login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const result = await this.authService.login(
       dto.email,
       dto.password,
       req.ip,
       req.headers['user-agent'],
     )
+    this.setCookies(res, result.accessToken, result.refreshToken)
+    return { user: result.user }
   }
 
   @Post('refresh')
@@ -41,9 +53,19 @@ export class AuthController {
   @ApiOperation({ summary: 'Renovar access token con refresh token' })
   @ApiResponse({ status: 200, description: 'Tokens renovados' })
   @ApiResponse({ status: 401, description: 'Refresh token inválido o expirado' })
-  @ApiBody({ type: RefreshDto })
-  refresh(@Body() dto: RefreshDto) {
-    return this.authService.refresh(dto.refreshToken)
+  @ApiBody({ type: RefreshDto, required: false })
+  async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response, @Body() dto?: RefreshDto) {
+    const cookies = req.headers.cookie?.split(';').reduce((acc, c) => {
+      const [k, v] = c.trim().split('=')
+      return { ...acc, [k]: v }
+    }, {} as Record<string, string>) || {}
+    const token = cookies.refreshToken || dto?.refreshToken
+    
+    if (!token) throw new Error('No refresh token provided')
+    
+    const result = await this.authService.refresh(token)
+    this.setCookies(res, result.accessToken, result.refreshToken)
+    return { message: 'Token renovado' }
   }
 
   @Post('logout')
@@ -51,12 +73,20 @@ export class AuthController {
   @ApiBearerAuth('JWT-Auth')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cerrar sesión — revoca el refresh token' })
-  logout(
+  async logout(
     @CurrentUser() user: any,
     @Req() req: Request,
-    @Body() body: { refreshToken?: string },
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.logout(user.id, body.refreshToken, req.ip)
+    const cookies = req.headers.cookie?.split(';').reduce((acc, c) => {
+      const [k, v] = c.trim().split('=')
+      return { ...acc, [k]: v }
+    }, {} as Record<string, string>) || {}
+    
+    res.clearCookie('accessToken')
+    res.clearCookie('refreshToken')
+    
+    return this.authService.logout(user.id, cookies.refreshToken, req.ip)
   }
 
   @Post('change-password')

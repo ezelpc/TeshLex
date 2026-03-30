@@ -133,6 +133,7 @@ export class UsersService {
     search?:   string   // busca en firstName + lastName + email
   }) {
     return this.prisma.user.findMany({
+      take: 500, // DoS Mitigation
       where: {
         ...(filters?.role     !== undefined && { role:     filters.role }),
         ...(filters?.isActive !== undefined && { isActive: filters.isActive }),
@@ -237,6 +238,7 @@ export class UsersService {
   // ══════════════════════════════════════════════════════════════════════════
   async getTeachers() {
     return this.prisma.teacherProfile.findMany({
+      take: 500, // DoS Mitigation
       include: {
         user: {
           select: {

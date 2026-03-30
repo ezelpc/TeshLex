@@ -1,13 +1,22 @@
 // src/pages/dashboard-profesor/+Page.tsx
 import '../../index.css'
 import { useState, useEffect } from 'react'
-import { api, ApiError }        from '../../lib/api'
+import { api }               from '../../lib/api'
 import { useRequireRole }       from '../../hooks/useRequireRole'
 import { PageLoader, ButtonSpinner } from '../../components/LoadingSpinner'
 import { ErrorBanner }          from '../../components/ErrorBanner'
+import { DashboardLayout }      from '../../components/DashboardLayout'
+
+const PROF_TABS = [
+  { id: 'home',       label: 'Mis Grupos',  icon: '' },
+  { id: 'attendance', label: 'Asistencia',  icon: '' },
+  { id: 'grades',     label: 'Evaluación',  icon: '' },
+  { id: 'support',    label: 'Soporte',     icon: '' },
+]
 
 export default function DashboardProfesor() {
   const { user } = useRequireRole('TEACHER')
+  const [activeTab, setActiveTab] = useState('home')
 
   const [courses,           setCourses]           = useState<any[]>([])
   const [selectedCourseId,  setSelectedCourseId]  = useState<string>('')
@@ -20,9 +29,12 @@ export default function DashboardProfesor() {
   const [error,             setError]             = useState('')
   const [successMsg,        setSuccessMsg]        = useState('')
 
-  // Simple grade per enrollment (0-10 float), no per-criteria breakdown in the simple UI.
-  // We create a single synthetic criteria entry using the course's first criterion or a default one.
   const [grades, setGrades] = useState<Record<string, string>>({})
+  
+  // -- Attendance State --
+  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().slice(0, 10))
+  const [attRecords,     setAttRecords]     = useState<Record<string, boolean>>({})
+  const [attSaving,      setAttSaving]      = useState(false)
 
   // Load teacher's courses
   useEffect(() => {
@@ -36,9 +48,8 @@ export default function DashboardProfesor() {
         })
         setCourses(data)
         if (data.length > 0) setSelectedCourseId(data[0].id)
-      } catch (err) {
-        if (err instanceof ApiError) setError(err.message)
-        else setError('Error al cargar tus cursos.')
+      } catch (err: any) {
+        setError(err.message || 'Error al cargar cursos')
       } finally {
         setLoading(false)
       }
@@ -50,22 +61,24 @@ export default function DashboardProfesor() {
   useEffect(() => {
     if (!selectedCourseId) return
     const load = async () => {
-      setLoadingStudents(true)
-      setEnrollments([])
-      setGrades({})
+      setLoadingStudents(true); setEnrollments([]); setGrades({})
       try {
         const data = await api.enrollments.getAll({ courseId: selectedCourseId, status: 'ACTIVE' })
         setEnrollments(data)
-        // Initialize grades from existing grade data
         const initGrades: Record<string, string> = {}
         data.forEach((e: any) => {
           const finalGrade = e.grades?.[0]?.finalGrade ?? e.grade?.finalGrade
           initGrades[e.id] = finalGrade != null ? String(finalGrade) : ''
         })
         setGrades(initGrades)
-      } catch (err) {
-        if (err instanceof ApiError) setError(err.message)
-        else setError('Error al cargar los alumnos del grupo.')
+        
+        // Init attendance map
+        const initAtt: Record<string, boolean> = {}
+        data.forEach(e => initAtt[e.id] = true)
+        setAttRecords(initAtt)
+
+      } catch (err: any) {
+        setError(err.message || 'Error al cargar alumnos')
       } finally {
         setLoadingStudents(false)
       }
@@ -74,14 +87,8 @@ export default function DashboardProfesor() {
   }, [selectedCourseId])
 
   const handleSaveGrades = async () => {
-    setSaving(true)
-    setError('')
-    setSuccessMsg('')
+    setSaving(true); setError(''); setSuccessMsg('')
     try {
-      // Get evaluation criteria for the selected course
-      const selectedCourse = courses.find(c => c.id === selectedCourseId)
-      const criteria       = selectedCourse?.evaluationCriteria ?? []
-
       await Promise.all(
         enrollments.map(e => {
           const raw = grades[e.id]
@@ -89,32 +96,19 @@ export default function DashboardProfesor() {
           const score = parseFloat(raw)
           if (isNaN(score)) return Promise.resolve()
 
-          // Build criteriaGrades from actual criteria if available; otherwise create a fallback
-          let criteriaGrades: any[]
-          if (criteria.length > 0) {
-            criteriaGrades = criteria.map((c: any) => ({
-              criteriaId:   c.id,
-              criteriaName: c.name,
-              score:        Math.min(10, Math.max(0, score)),
-              weight:       c.percentage,
-            }))
-          } else {
-            // Fallback: synthetic single criterion with 100% weight
-            criteriaGrades = [{
+          return api.enrollments.saveGrades(e.id, { 
+            criteriaGrades: [{
               criteriaId:   '00000000-0000-0000-0000-000000000001',
               criteriaName: 'Calificación Global',
               score:        Math.min(10, Math.max(0, score)),
               weight:       100,
-            }]
-          }
-
-          return api.enrollments.saveGrades(e.id, { criteriaGrades })
+            }] 
+          })
         })
       )
-      setSuccessMsg('Calificaciones guardadas correctamente.')
-    } catch (err) {
-      if (err instanceof ApiError) setError(err.message)
-      else setError('Error al guardar las calificaciones.')
+      setSuccessMsg('Calificaciones guardadas.')
+    } catch (err: any) {
+      setError(err.message || 'Error al guardar notas')
     } finally {
       setSaving(false)
     }
@@ -122,184 +116,228 @@ export default function DashboardProfesor() {
 
   const handleSendComment = async () => {
     if (!comment.trim()) return
-    setSendingComment(true)
-    setError('')
+    setSendingComment(true); setError('')
     try {
       await api.teacher.sendComment(comment.trim())
-      setComment('')
-      setSuccessMsg('Comentario enviado al administrador.')
-    } catch (err) {
-      if (err instanceof ApiError) setError(err.message)
-      else setError('Error al enviar el comentario.')
+      setComment(''); setSuccessMsg('Comentario enviado.')
+    } catch (err: any) {
+      setError(err.message || 'Error al enviar mensaje')
     } finally {
       setSendingComment(false)
     }
   }
 
   if (!user) return null
-  if (loading) return <PageLoader message="Cargando tu panel..." />
+  if (loading) return <PageLoader message="Cargando panel..." />
 
   const selectedCourse = courses.find(c => c.id === selectedCourseId)
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-100">
-
-      {/* Navbar */}
-      <nav className="bg-green-800 text-white px-6 py-3 flex justify-between items-center shadow-md">
-        <span className="font-bold text-lg">TESH — Panel Profesor</span>
-        <div className="flex items-center gap-4">
-          <span className="text-green-200 text-sm">{user.firstName} {user.lastName}</span>
-          <button
-            onClick={() => api.auth.logout().then(() => { window.location.href = '/login' })}
-            className="bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-4 py-2 rounded transition-colors"
-          >
-            Cerrar Sesión
-          </button>
-        </div>
-      </nav>
-
-      <div className="p-6 max-w-5xl mx-auto w-full space-y-6">
-        <h2 className="text-xl font-bold text-gray-800">Panel del Profesor</h2>
-
-        {error      && <ErrorBanner message={error} onClose={() => setError('')} />}
+    <DashboardLayout 
+      user={user} 
+      activeTab={activeTab} 
+      setActiveTab={setActiveTab} 
+      tabs={PROF_TABS}
+      title="Panel Académico"
+    >
+      <div className="space-y-6">
+        {error && <ErrorBanner message={error} onClose={() => setError('')} />}
         {successMsg && (
-          <div role="alert" className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-700 font-medium flex justify-between">
-            ✅ {successMsg}
-            <button onClick={() => setSuccessMsg('')} className="text-green-500 hover:text-green-700 ml-4">✕</button>
+          <div className="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded shadow-sm flex justify-between">
+            <p className="text-sm font-bold">{successMsg}</p>
+            <button onClick={() => setSuccessMsg('')} className="text-green-900/50 hover:text-green-900">✕</button>
           </div>
         )}
-
-        {/* Course selector */}
-        {courses.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-sm p-8 text-center text-gray-400">
-            <p className="text-lg font-medium">Sin cursos asignados</p>
-            <p className="text-sm">Contacta al administrador para que te asigne un grupo.</p>
-          </div>
-        ) : (
-          <>
-            <div className="bg-white rounded-xl shadow-sm p-5">
-              <h3 className="text-blue-600 font-bold text-lg mb-3">Mis Grupos</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* ── Home Tab (Course Selection) ──────────── */}
+        {activeTab === 'home' && (
+          <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <h3 className="text-xl font-bold text-gray-800 mb-6 font-sans">Mis Grupos Asignados</h3>
+            {courses.length === 0 ? (
+              <div className="bg-white p-12 rounded-xl border-2 border-dashed border-gray-200 text-center">
+                <p className="text-gray-400 font-medium italic">Sin grupos asignados actualmente</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {courses.map((c: any) => (
                   <button
                     key={c.id}
-                    onClick={() => setSelectedCourseId(c.id)}
-                    className={`text-left border rounded-xl p-4 transition-colors ${
-                      selectedCourseId === c.id
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200 hover:border-gray-300'
+                    onClick={() => { setSelectedCourseId(c.id); setActiveTab('attendance') }}
+                    className={`text-left p-6 rounded-xl border transition-all ${
+                      selectedCourseId === c.id 
+                        ? 'bg-blue-600 border-blue-600 shadow-md text-white' 
+                        : 'bg-white border-gray-100 hover:border-blue-200'
                     }`}
                   >
-                    <p className="font-bold text-gray-800 text-sm">
-                      {c.language?.name} — {c.level}
+                    <div className="flex justify-between items-start mb-2">
+                       <p className={`text-lg font-bold ${selectedCourseId === c.id ? 'text-white' : 'text-gray-800'}`}>
+                        {c.language?.name} — {c.level}
+                      </p>
+                    </div>
+                    <p className={`text-sm ${selectedCourseId === c.id ? 'text-blue-100' : 'text-gray-500'}`}>
+                      {c.scheduleDescription || 'Horario por definir'}
                     </p>
-                    {c.scheduleDescription && <p className="text-xs text-gray-500 mt-0.5">{c.scheduleDescription}</p>}
-                    <p className="text-xs text-blue-600 mt-1">{c._count?.enrollments ?? c.currentStudents ?? 0} alumnos</p>
+                    <div className="mt-4 flex items-center gap-2">
+                      <span className={`h-2 w-2 rounded-full ${selectedCourseId === c.id ? 'bg-white' : 'bg-green-500'}`}></span>
+                      <p className={`text-xs font-bold ${selectedCourseId === c.id ? 'text-white' : 'text-gray-600'}`}>
+                        {c._count?.enrollments ?? 0} alumnos inscritos
+                      </p>
+                    </div>
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* Grade table */}
-            <div className="bg-white rounded-xl shadow-sm p-5">
-              <h3 className="text-blue-600 font-bold text-lg mb-4">
-                Calificaciones — {selectedCourse?.language?.name} {selectedCourse?.level}
-              </h3>
-              <p className="text-xs text-gray-500 mb-3">
-                Ingresa la calificación global (0–10). Se registrará como criterio único con 100% de peso.
-              </p>
-
-              {loadingStudents ? (
-                <div className="py-8 flex justify-center">
-                  <div className="w-8 h-8 rounded-full border-4 border-blue-200 border-t-blue-600 animate-spin" />
-                </div>
-              ) : enrollments.length === 0 ? (
-                <p className="text-sm text-gray-400 italic">No hay alumnos activos en este grupo.</p>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-gray-200">
-                          <th className="text-left py-2 px-3 text-gray-600 font-semibold">ALUMNO</th>
-                          <th className="text-left py-2 px-3 text-gray-600 font-semibold">CALIFICACIÓN (0–10)</th>
-                          <th className="text-left py-2 px-3 text-gray-600 font-semibold">ESTADO</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {enrollments.map((e: any) => {
-                          const student = e.student?.user
-                          const val     = grades[e.id] ?? ''
-                          const num     = parseFloat(val)
-                          const approves = !isNaN(num) && num >= 7
-                          return (
-                            <tr key={e.id} className="border-b border-gray-100">
-                              <td className="py-2 px-3 text-gray-700">
-                                {student?.lastName} {student?.firstName}
-                              </td>
-                              <td className="py-2 px-3">
-                                <input
-                                  type="number"
-                                  min="0" max="10" step="0.1"
-                                  value={val}
-                                  onChange={ev => setGrades(g => ({ ...g, [e.id]: ev.target.value }))}
-                                  className={`w-24 border rounded px-2 py-1 text-sm outline-none focus:border-blue-400 ${!isNaN(num) && num < 7 ? 'text-red-600 border-red-300' : 'text-gray-800 border-gray-300'}`}
-                                  aria-label="Calificación"
-                                />
-                              </td>
-                              <td className="py-2 px-3">
-                                {!isNaN(num) && (
-                                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${approves ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                    {approves ? 'Aprobado' : 'Reprobado'}
-                                  </span>
-                                )}
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <button
-                    onClick={handleSaveGrades}
-                    disabled={saving}
-                    aria-busy={saving}
-                    className="mt-4 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    {saving && <ButtonSpinner />}
-                    {saving ? 'Guardando...' : 'Guardar Calificaciones'}
-                  </button>
-                </>
-              )}
-            </div>
-          </>
+            )}
+          </div>
         )}
 
-        {/* Comment to admin */}
-        <div className="bg-white rounded-xl shadow-sm p-5">
-          <h3 className="text-blue-600 font-bold text-lg mb-3">Comentarios para el Administrador</h3>
-          <textarea
-            placeholder="Ej: Se requiere más material audiovisual para el nivel A1..."
-            value={comment}
-            onChange={e => setComment(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 h-24 resize-none"
-            aria-label="Comentario para el administrador"
-          />
-          <button
-            onClick={handleSendComment}
-            disabled={sendingComment || comment.trim().length < 10}
-            aria-busy={sendingComment}
-            className="mt-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors flex items-center gap-2"
-          >
-            {sendingComment && <ButtonSpinner />}
-            {sendingComment ? 'Enviando...' : 'Enviar Comentario'}
-          </button>
-          {comment.trim().length > 0 && comment.trim().length < 10 && (
-            <p className="text-xs text-red-500 mt-1">El comentario debe tener al menos 10 caracteres.</p>
-          )}
-        </div>
+        {/* ── Attendance Tab ──────────────────────── */}
+        {activeTab === 'attendance' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">Pase de Lista</h3>
+                <p className="text-sm text-gray-500">{selectedCourse?.language?.name} {selectedCourse?.level}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-gray-400 uppercase">FECHA:</span>
+                <input 
+                  type="date" value={attendanceDate} 
+                  onChange={e => setAttendanceDate(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:border-blue-400"
+                />
+              </div>
+            </div>
+
+            {enrollments.length === 0 ? (
+              <p className="text-center py-12 text-gray-400 italic">No hay alumnos inscritos en este grupo.</p>
+            ) : (
+              <div className="space-y-2 mb-6">
+                {enrollments.map((e: any) => (
+                  <div key={e.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-transparent hover:border-gray-100 transition-colors">
+                    <span className="font-bold text-gray-700 text-sm">{e.student?.user?.lastName} {e.student?.user?.firstName}</span>
+                    <button 
+                      onClick={() => setAttRecords(prev => ({ ...prev, [e.id]: !prev[e.id] }))}
+                      className={`px-4 py-1 rounded-md text-[10px] font-bold transition-all ${
+                        attRecords[e.id] 
+                          ? 'bg-green-600 text-white' 
+                          : 'bg-red-500 text-white'
+                      }`}
+                    >
+                      {attRecords[e.id] ? 'PRESENTE' : 'FALTA'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button
+              onClick={async () => {
+                setAttSaving(true)
+                try {
+                  const records = Object.entries(attRecords).map(([enrollmentId, isPresent]) => ({
+                    enrollmentId,
+                    isPresent
+                  }))
+                  await api.enrollments.recordBulkAttendance(selectedCourseId, attendanceDate, records)
+                  setSuccessMsg('Asistencia guardada.')
+                } catch (err: any) {
+                  setError(err.message || 'Error al guardar')
+                } finally {
+                  setAttSaving(false)
+                }
+              }}
+              disabled={attSaving || enrollments.length === 0}
+              className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+            >
+              {attSaving ? <ButtonSpinner /> : 'Guardar Asistencia'}
+            </button>
+          </div>
+        )}
+
+        {/* ── Grades Tab ─────────────────────────── */}
+        {activeTab === 'grades' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <h3 className="text-lg font-bold text-gray-800 mb-6">Evaluación de Alumnos</h3>
+            
+            {loadingStudents ? (
+              <div className="py-12 flex justify-center"><ButtonSpinner /></div>
+            ) : enrollments.length === 0 ? (
+              <p className="text-center py-12 text-gray-400 italic">Sin alumnos activos.</p>
+            ) : (
+              <>
+                <div className="overflow-x-auto rounded-xl border border-gray-100 mb-6">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left p-4 font-bold text-gray-500 uppercase tracking-tight">Estudiante</th>
+                        <th className="text-center p-4 font-bold text-gray-500 uppercase tracking-tight">Calif. Global</th>
+                        <th className="text-right p-4 font-bold text-gray-500 uppercase tracking-tight">Resultado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {enrollments.map((e: any) => {
+                        const val = grades[e.id] ?? ''
+                        const score = parseFloat(val)
+                        const passes = !isNaN(score) && score >= 7
+                        return (
+                          <tr key={e.id} className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-4 font-bold text-gray-700">
+                             {e.student?.user?.lastName} {e.student?.user?.firstName}
+                            </td>
+                            <td className="p-4 text-center">
+                              <input 
+                                type="number" min="0" max="10" step="0.1" 
+                                value={val} 
+                                onChange={ev => setGrades({...grades, [e.id]: ev.target.value})}
+                                className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-center font-bold focus:border-blue-400 outline-none"
+                              />
+                            </td>
+                            <td className="p-4 text-right">
+                              {!isNaN(score) && (
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${passes ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                                  {passes ? 'APROBADO' : 'REPROBADO'}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  onClick={handleSaveGrades}
+                  disabled={saving}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2"
+                >
+                  {saving ? <ButtonSpinner /> : 'Guardar Acta de Calificaciones'}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Support Tab ────────────────────────── */}
+        {activeTab === 'support' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 animate-in fade-in slide-in-from-bottom-2 duration-300 max-w-xl mx-auto">
+            <h3 className="text-lg font-bold text-gray-800 mb-1">Reporte a Administración</h3>
+            <p className="text-xs text-gray-500 mb-6">Su mensaje será revisado por el personal administrativo.</p>
+
+            <textarea 
+              value={comment} onChange={e => setComment(e.target.value)}
+              placeholder="Escriba su mensaje aquí..."
+              className="w-full h-32 border border-gray-200 rounded-xl p-4 outline-none focus:border-blue-400 transition-all resize-none shadow-inner"
+            />
+            <button
+              onClick={handleSendComment}
+              disabled={sendingComment || comment.trim().length < 5}
+              className="w-full mt-4 bg-gray-800 text-white font-bold py-3 rounded-xl hover:bg-gray-700 transition-all shadow-xl flex items-center justify-center gap-3 disabled:opacity-50"
+            >
+              {sendingComment ? <ButtonSpinner /> : 'Enviar Mensaje'}
+            </button>
+          </div>
+        )}
       </div>
-    </div>
+    </DashboardLayout>
   )
 }
+

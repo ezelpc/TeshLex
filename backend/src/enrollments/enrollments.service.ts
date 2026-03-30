@@ -28,6 +28,7 @@ export class EnrollmentsService {
     status?:    EnrollmentStatus
   }) {
     return this.prisma.enrollment.findMany({
+      take: 100, // DoS Mitigation
       where: {
         ...(filters?.studentId && { studentId: filters.studentId }),
         ...(filters?.courseId  && { courseId:  filters.courseId }),
@@ -98,6 +99,19 @@ export class EnrollmentsService {
       throw new ConflictException('El curso ya no tiene lugares disponibles')
     }
 
+    // 1.5 Verificar ventana de inscripción si el ciclo lo permite
+    if (course.cycleId) {
+      const cycle = await this.prisma.schoolCycle.findUnique({ where: { id: course.cycleId } }) as any
+      if (cycle && cycle.enrollmentStart && cycle.enrollmentEnd) {
+        const now = new Date()
+        if (now < cycle.enrollmentStart || now > cycle.enrollmentEnd) {
+          throw new BadRequestException(`Las inscripciones para este ciclo no están disponibles. Periodo: ${new Date(cycle.enrollmentStart).toLocaleDateString()} al ${new Date(cycle.enrollmentEnd).toLocaleDateString()}`)
+        }
+      }
+    }
+
+
+
     // 2. Verificar que no tenga inscripción previa
     const existing = await this.prisma.enrollment.findUnique({
       where: { studentId_courseId: { studentId: studentProfileId, courseId } },
@@ -106,7 +120,12 @@ export class EnrollmentsService {
       throw new ConflictException('Ya tienes una inscripción en este curso')
     }
 
+    // 3. Verificar traslape de horarios
+    await this.checkScheduleConflict(studentProfileId, course)
+
+
     const enrollment = await this.prisma.enrollment.create({
+
       data: {
         studentId:       studentProfileId,
         courseId,
@@ -137,6 +156,10 @@ export class EnrollmentsService {
       )
     }
 
+    if (enrollment.course.currentStudents >= enrollment.course.maxStudents) {
+      this.logger.warn(`ALERTA: Sobreventa de curso. El curso ${enrollment.courseId} excedió su cupo al activarse la inscripción ${enrollmentId} vía pago rezagado.`)
+    }
+
     const [updated] = await this.prisma.$transaction([
       this.prisma.enrollment.update({
         where: { id: enrollmentId },
@@ -160,8 +183,8 @@ export class EnrollmentsService {
     ])
 
     // Email de confirmación — no bloquea si falla
-    const user    = enrollment.student.user as any
-    const course  = enrollment.course as any
+    const user    = enrollment.student.user as { firstName: string, lastName: string, email: string }
+    const course  = enrollment.course as { level: string, language: { name: string } }
     const name    = `${user.firstName} ${user.lastName}`
     const cName   = `${course.language.name} ${course.level}`
 
@@ -210,8 +233,8 @@ export class EnrollmentsService {
     ])
 
     // Notificar al alumno
-    const user   = enrollment.student.user as any
-    const course = enrollment.course as any
+    const user   = enrollment.student.user as { firstName: string, lastName: string, email: string }
+    const course = enrollment.course as { level: string, language: { name: string } }
     await this.notifications.sendDropNotification(
       user.email,
       `${user.firstName} ${user.lastName}`,
@@ -265,10 +288,15 @@ export class EnrollmentsService {
 
   async saveGrades(
     enrollmentId:     string,
-    teacherProfileId: string,
+    teacherProfileId: string | undefined,
+    userRole:         string,
     dto:              SaveGradesDto,
   ) {
     const enrollment = await this.findOne(enrollmentId)
+
+    if (userRole === 'TEACHER' && enrollment.course.teacherId !== teacherProfileId) {
+      throw new ForbiddenException('IDOR Prevented: Solo el profesor asignado al curso puede calificar')
+    }
 
     if (enrollment.status !== EnrollmentStatus.ACTIVE) {
       throw new BadRequestException('Solo se pueden calificar inscripciones activas')
@@ -292,7 +320,7 @@ export class EnrollmentsService {
       },
       create: {
         enrollmentId,
-        teacherId:     teacherProfileId,
+        teacherId:     teacherProfileId || (enrollment.course as any).teacherId || 'admin',
         criteriaGrades: dto.criteriaGrades as any,
         finalGrade,
         passed,
@@ -333,12 +361,18 @@ export class EnrollmentsService {
 
   async recordAttendance(
     enrollmentId: string,
+    teacherProfileId: string | undefined,
+    userRole: string,
     date:         string,
     present:      boolean,
     notes?:       string,
   ) {
     // Verificar que la inscripción existe
-    await this.findOne(enrollmentId)
+    const enrollment = await this.findOne(enrollmentId)
+
+    if (userRole === 'TEACHER' && enrollment.course.teacherId !== teacherProfileId) {
+      throw new ForbiddenException('IDOR Prevented: Solo el profesor asignado puede registrar asistencia')
+    }
 
     const attendanceDate = new Date(date)
 
@@ -352,9 +386,18 @@ export class EnrollmentsService {
   // Registrar asistencia en bloque (toda la clase de un día)
   async recordBulkAttendance(
     courseId: string,
+    teacherProfileId: string | undefined,
+    userRole: string,
     date:     string,
     records:  { enrollmentId: string; present: boolean; notes?: string }[],
   ) {
+    const course = await this.prisma.course.findUnique({ where: { id: courseId } })
+    if (!course) throw new NotFoundException('Curso no encontrado')
+    
+    if (userRole === 'TEACHER' && course.teacherId !== teacherProfileId) {
+       throw new ForbiddenException('IDOR Prevented: Solo el profesor asignado puede registrar asistencia masiva');
+    }
+
     const attendanceDate = new Date(date)
 
     const results = await Promise.all(
@@ -403,5 +446,51 @@ export class EnrollmentsService {
     const percent  = total > 0 ? Math.round((present / total) * 100) : 0
 
     return { total, present, absent, percent, records: attendances }
+  }
+
+  // ─── LÓGICA DE TRASLAPE ──────────────────────────────────────────────────
+  
+  private async checkScheduleConflict(studentId: string, newCourse: any) {
+    const activeEnrollments = await this.prisma.enrollment.findMany({
+      where: {
+        studentId,
+        status: { in: ['ACTIVE', 'PENDING_PAYMENT'] },
+      },
+      include: { course: true },
+    })
+
+    for (const enrollment of activeEnrollments) {
+      const currentCourse = enrollment.course
+      
+      // 1. Verificar si comparten al menos un día de la semana
+      const commonDays = newCourse.daysOfWeek.filter((day: number) => 
+        currentCourse.daysOfWeek.includes(day)
+      )
+
+      if (commonDays.length > 0) {
+        // 2. Verificar traslape de horas: (StartA < EndB) && (EndA > StartB)
+        // Convertimos "HH:mm" a minutos totales para comparar fácilmente
+        const toMin = (t: string) => {
+          const [h, m] = t.split(':').map(Number)
+          return h * 60 + m
+        }
+
+        const newStart = toMin(newCourse.startTime)
+        const newEnd   = toMin(newCourse.endTime)
+        const currStart = toMin(currentCourse.startTime)
+        const currEnd   = toMin(currentCourse.endTime)
+
+        if (newStart < currEnd && newEnd > currStart) {
+          const daysStr = commonDays.map((d: number) => 
+            ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'][d]
+          ).join(', ')
+          
+          throw new ConflictException(
+            `Conflicto de horario con el curso ${currentCourse.scheduleDescription}. ` +
+            `Días en conflicto: ${daysStr} (${currentCourse.startTime} - ${currentCourse.endTime})`
+          )
+        }
+      }
+    }
   }
 }
