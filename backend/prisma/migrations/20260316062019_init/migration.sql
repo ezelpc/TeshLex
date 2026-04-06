@@ -13,6 +13,16 @@ CREATE EXTENSION IF NOT EXISTS "unaccent";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";     -- Full-text search con trigrams
 CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
 
+-- ── Wrapper IMMUTABLE para unaccent ──────────────────────────────────────────
+-- unaccent() es STABLE por defecto; necesitamos un wrapper IMMUTABLE
+-- para poder usarlo en expresiones de índice (GIN, etc.)
+CREATE OR REPLACE FUNCTION f_unaccent(text)
+  RETURNS text
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS
+$func$
+  SELECT public.unaccent('public.unaccent', $1)
+$func$;
+
 -- ── ENUMs ─────────────────────────────────────────────────────────────────────
 CREATE TYPE "Role" AS ENUM (
   'STUDENT', 'TEACHER', 'ADMIN', 'SUPERADMIN'
@@ -96,9 +106,11 @@ CREATE INDEX "users_email_idx"          ON "users" ("email");
 CREATE INDEX "users_role_isactive_idx"  ON "users" ("role", "isActive");
 CREATE INDEX "users_name_idx"           ON "users" ("firstName", "lastName");
 -- Full-text search en nombre completo usando trigrams
+-- NOTA: Usa f_unaccent() (wrapper IMMUTABLE) en lugar de unaccent() directamente,
+-- ya que unaccent() es STABLE y PostgreSQL no permite funciones STABLE en índices.
 CREATE INDEX "users_fulltext_idx"
   ON "users" USING GIN (
-    to_tsvector('spanish', unaccent("firstName") || ' ' || unaccent("lastName"))
+    to_tsvector('spanish', f_unaccent("firstName") || ' ' || f_unaccent("lastName"))
   );
 
 -- student_profiles

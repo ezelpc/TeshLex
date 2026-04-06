@@ -2,9 +2,13 @@
 // 🔐 JWT Blacklist Service — Revocación de JTI (JWT ID)
 // Usar en memoria para dev, Redis para prod
 // Previene reutilización de tokens después de logout/password change
+//
+// NOTE: Uses $queryRaw/$executeRaw to avoid dependency on generated
+//       Prisma client types (allows compilation before `prisma generate`).
 
 import { Injectable, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
+import { Prisma } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 
 @Injectable()
@@ -26,12 +30,11 @@ export class JwtBlacklistService {
   async addToBlacklist(jti: string, expiresAt: Date): Promise<void> {
     try {
       // Guardar en BD para persistencia (producción)
-      await this.prisma.jTIBlacklist.create({
-        data: {
-          jti,
-          expiresAt,
-        },
-      })
+      await this.prisma.$executeRaw`
+        INSERT INTO jti_blacklist (id, jti, "expiresAt", "createdAt")
+        VALUES (gen_random_uuid(), ${jti}, ${expiresAt}, NOW())
+        ON CONFLICT (jti) DO NOTHING
+      `
 
       // También en memoria para lookup rápido
       if (this.inMemoryBlacklist.size >= this.MAX_MEMORY_SIZE) {
@@ -67,9 +70,10 @@ export class JwtBlacklistService {
 
     // Si no encontrado en memoria, verificar BD (para caso de restart)
     try {
-      const record = await this.prisma.jTIBlacklist.findUnique({
-        where: { jti },
-      })
+      const records = await this.prisma.$queryRaw<{ jti: string; expiresAt: Date }[]>`
+        SELECT jti, "expiresAt" FROM jti_blacklist WHERE jti = ${jti} LIMIT 1
+      `
+      const record = records[0]
 
       if (record) {
         // Si ya expiró, no importa que esté blacklisted
@@ -96,14 +100,11 @@ export class JwtBlacklistService {
    */
   async cleanupExpiredJTIs(): Promise<number> {
     try {
-      const result = await this.prisma.jTIBlacklist.deleteMany({
-        where: {
-          expiresAt: { lt: new Date() },
-        },
-      })
-
-      this.logger.log(`Cleaned up ${result.count} expired JTIs`)
-      return result.count
+      const result = await this.prisma.$executeRaw`
+        DELETE FROM jti_blacklist WHERE "expiresAt" < NOW()
+      `
+      this.logger.log(`Cleaned up ${result} expired JTIs`)
+      return result
     } catch (error) {
       this.logger.error(`Error cleaning up JTIs: ${error.message}`)
       return 0
@@ -117,25 +118,23 @@ export class JwtBlacklistService {
   async revokeUserTokens(userId: string): Promise<void> {
     try {
       // Buscar todos los tokens activos del usuario que no han expirado
-      const tokens = await this.prisma.refreshToken.findMany({
-        where: {
-          userId,
-          revokedAt: null,
-          expiresAt: { gt: new Date() },
-        },
-      })
+      const tokens = await this.prisma.$queryRaw<{ id: string; expiresAt: Date }[]>`
+        SELECT id, "expiresAt" FROM refresh_tokens
+        WHERE "userId" = ${Prisma.sql`${userId}::uuid`}
+          AND "revokedAt" IS NULL
+          AND "expiresAt" > NOW()
+      `
 
-      // Blacklist todos los JTIs asociados (extraer de token si es necesario)
-      for (const token of tokens) {
-        // Si el token tiene metadata con jti, agregar a blacklist
-        // De lo contrario, confiar en que refresh token revocation es suficiente
-        await this.prisma.jTIBlacklist.createMany({
-          data: tokens.map((t) => ({
-            jti: `${userId}:${t.id}`, // Convención: userId:tokenId como JTI
-            expiresAt: t.expiresAt,
-          })),
-          skipDuplicates: true,
-        })
+      if (tokens.length === 0) return
+
+      // Blacklist todos los JTIs asociados (convención: userId:tokenId)
+      for (const t of tokens) {
+        await this.prisma.$executeRaw`
+          INSERT INTO jti_blacklist (id, jti, "expiresAt", "createdAt")
+          VALUES (gen_random_uuid(), ${`${userId}:${t.id}`}, ${t.expiresAt}, NOW())
+          ON CONFLICT (jti) DO NOTHING
+        `
+        this.inMemoryBlacklist.add(`${userId}:${t.id}`)
       }
 
       this.logger.log(`Revoked ${tokens.length} tokens for user ${userId}`)
@@ -149,7 +148,10 @@ export class JwtBlacklistService {
    */
   async getStats(): Promise<{ memorySize: number; dbSize: number }> {
     try {
-      const dbSize = await this.prisma.jTIBlacklist.count()
+      const rows = await this.prisma.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*) as count FROM jti_blacklist
+      `
+      const dbSize = Number(rows[0]?.count ?? 0)
       return {
         memorySize: this.inMemoryBlacklist.size,
         dbSize,
