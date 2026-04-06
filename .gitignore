@@ -34,6 +34,9 @@ backend/qa_*.js
 .idea/
 *.swp
 
+# pnpm store local
+.pnpm-store/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -44,3 +47,9 @@ Thumbs.db
 *.p12
 *.pfx
 trivy-report.json
+
+# Kubernetes / infra secrets
+*.kubeconfig
+kubeconfig
+**/secrets.yaml
+**/*-secret.yaml

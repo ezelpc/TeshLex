@@ -1,5 +1,24 @@
-node_modules
-# Keep environment variables out of version control
-.env
+# Dependencies
+node_modules/
 
+# Build output
+dist/
+
+# Environment variables — nunca subir
+.env
+.env.local
+.env.*.local
+
+# Prisma generated client
 /generated/prisma
+
+# Logs
+*.log
+server.log
+debug.log
+
+# Test coverage
+coverage/
+
+# QA scripts con datos sensibles
+qa_*.js
