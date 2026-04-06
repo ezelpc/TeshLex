@@ -43,7 +43,8 @@ async function bootstrap() {
         connectSrc: ["'self'", process.env.FRONTEND_URL ?? 'http://localhost:5173'],
         frameSrc: ["'none'"],
         objectSrc: ["'none'"],
-        upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : undefined,
+        // Only include upgradeInsecureRequests in production (undefined is not a valid value)
+        ...(process.env.NODE_ENV === 'production' ? { upgradeInsecureRequests: [] as [] } : {}),
       },
     },
     // X-Frame-Options: Deny clickjacking
