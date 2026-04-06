@@ -32,6 +32,13 @@ async function findOrCreateCourse(data: any, criterios: any[], cycleId: string) 
 }
 
 async function main() {
+  const isProduction = process.env.NODE_ENV === 'production'
+  
+  if (isProduction) {
+    console.error('❌ El seed no puede ejecutarse en NODE_ENV=production')
+    process.exit(1)
+  }
+
   console.log('\n🌱 TeshLex — Iniciando seed...\n')
 
   // Config
@@ -42,8 +49,18 @@ async function main() {
     { key: 'passing_grade', value: '7', type: 'number', label: 'Calificación mínima (0-10)' },
     { key: 'min_attendance_percent', value: '80', type: 'number', label: 'Asistencia mínima (%)' },
     { key: 'levels_for_certificate', value: '4', type: 'number', label: 'Niveles para certificado' },
-    { key: 'school_name', value: 'TESH — Cursos de Idiomas', type: 'string', label: 'Nombre del centro' },
-    { key: 'contact_email', value: 'lenguas@tesh.edu.mx', type: 'string', label: 'Email de contacto' },
+    { 
+      key:   'school_name', 
+      value: process.env.SEED_SCHOOL_NAME ?? 'TESH — Cursos de Idiomas', 
+      type:  'string', 
+      label: 'Nombre del centro' 
+    },
+    { 
+      key:   'contact_email', 
+      value: process.env.SEED_CONTACT_EMAIL ?? 'dev-test@localhost.invalid', 
+      type:  'string', 
+      label: 'Email de contacto' 
+    },
     { key: 'mp_webhook_enabled', value: 'true', type: 'boolean', label: 'Webhooks Mercado Pago' },
   ]
   for (const c of configs) {

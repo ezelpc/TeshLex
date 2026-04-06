@@ -233,9 +233,9 @@ export default function DashboardProfesor() {
               onClick={async () => {
                 setAttSaving(true)
                 try {
-                  const records = Object.entries(attRecords).map(([enrollmentId, isPresent]) => ({
+                  const records = Object.entries(attRecords).map(([enrollmentId, present]) => ({
                     enrollmentId,
-                    isPresent
+                    present
                   }))
                   await api.enrollments.recordBulkAttendance(selectedCourseId, attendanceDate, records)
                   setSuccessMsg('Asistencia guardada.')

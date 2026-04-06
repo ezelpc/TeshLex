@@ -1,0 +1,177 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: teshlex-backend
+  namespace: default
+  labels:
+    app: teshlex
+    tier: backend
+spec:
+  replicas: 1 # t2.micro: 1GB RAM — no sobrecargues
+  selector:
+    matchLabels:
+      app: teshlex
+      tier: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: teshlex
+        tier: backend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+        # Adicionales: deshabilitar privilege escalation a nivel pod
+        fsGroupChangePolicy: "OnRootMismatch"
+        supplementalGroups: [1001]
+        seLinuxOptions:
+          level: "s0:c123,c456" # Si SELinux está habilitado
+
+      containers:
+        - name: backend
+          image: DOCKERHUB_USER/teshlex-backend:latest # CI/CD lo sobreescribe
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1001
+            capabilities:
+              drop: [ALL]
+              add: [] # No agregar ninguna capability
+            seccompProfile:
+              type: RuntimeDefault
+
+          # t2.micro: 1 vCPU, 1GB RAM — dejar margen para k3s y Nginx
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+          envFrom:
+            - secretRef:
+                name: teshlex-backend-secrets
+
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: teshlex-frontend
+  namespace: default
+  labels:
+    app: teshlex
+    tier: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: teshlex
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: teshlex
+        tier: frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: frontend
+          image: DOCKERHUB_USER/teshlex-frontend:latest # CI/CD lo sobreescribe
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1001
+            capabilities:
+              drop: [ALL]
+              add: []
+            seccompProfile:
+              type: RuntimeDefault
+
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-pid
+              mountPath: /var/run
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-pid
+          emptyDir: {}

@@ -521,3 +521,19 @@ model RefreshToken {
   @@index([expiresAt])
   @@map("refresh_tokens")
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 🔐 JWT BLACKLIST — Revocación de JTI (evitar reutilización de tokens)
+// ──────────────────────────────────────────────────────────────────────────────
+
+model JTIBlacklist {
+  id        String    @id @default(uuid()) @db.Uuid
+  jti       String    @unique @db.VarChar(500)  // JWT ID único
+  expiresAt DateTime  // Después de esta fecha, el JTI no necesita estar en blacklist
+
+  createdAt DateTime  @default(now())
+
+  @@index([jti])
+  @@index([expiresAt])
+  @@map("jti_blacklist")
+}

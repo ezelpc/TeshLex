@@ -22,33 +22,51 @@ export class EnrollmentsService {
   // LISTAR
   // ══════════════════════════════════════════════════════════════════════════
 
-  async findAll(filters?: {
-    studentId?: string
-    courseId?:  string
-    status?:    EnrollmentStatus
-  }) {
-    return this.prisma.enrollment.findMany({
-      take: 100, // DoS Mitigation
-      where: {
-        ...(filters?.studentId && { studentId: filters.studentId }),
-        ...(filters?.courseId  && { courseId:  filters.courseId }),
-        ...(filters?.status    && { status:    filters.status }),
-      },
-      include: {
-        student: {
-          include: {
-            user: { select: { firstName: true, lastName: true, email: true, avatarUrl: true } },
+  async findAll(
+    filters?: {
+      studentId?: string
+      courseId?:  string
+      status?:    EnrollmentStatus
+    },
+    page  = 1,
+    limit = 50,
+  ) {
+    const safePage  = Math.max(1, page)
+    const safeLimit = Math.min(Math.max(1, limit), 200) // máximo 200 por request
+    const skip      = (safePage - 1) * safeLimit
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.enrollment.findMany({
+        skip,
+        take: safeLimit,
+        where: {
+          ...(filters?.studentId && { studentId: filters.studentId }),
+          ...(filters?.courseId  && { courseId:  filters.courseId }),
+          ...(filters?.status    && { status:    filters.status }),
+        },
+        include: {
+          student: {
+            include: {
+              user: { select: { firstName: true, lastName: true, email: true, avatarUrl: true } },
+            },
           },
+          course:   { include: { language: true } },
+          grades:   true,
+          payments: { orderBy: { createdAt: 'desc' }, take: 1 },
+          document: true,
         },
-        course: {
-          include: { language: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.enrollment.count({
+        where: {
+          ...(filters?.studentId && { studentId: filters.studentId }),
+          ...(filters?.courseId  && { courseId:  filters.courseId }),
+          ...(filters?.status    && { status:    filters.status }),
         },
-        grades:   true,
-        payments: { orderBy: { createdAt: 'desc' }, take: 1 },
-        document: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    })
+      }),
+    ])
+
+    return { data, total, page: safePage, lastPage: Math.ceil(total / safeLimit) }
   }
 
   async findOne(id: string) {
@@ -150,48 +168,68 @@ export class EnrollmentsService {
   async activate(enrollmentId: string) {
     const enrollment = await this.findOne(enrollmentId)
 
+    // Idempotencia: si ya está activa, no hacer nada (webhook duplicado de MP)
+    if (enrollment.status === EnrollmentStatus.ACTIVE) {
+      this.logger.warn(`activate() llamado en inscripción ya activa: ${enrollmentId}`)
+      return enrollment
+    }
+
     if (enrollment.status !== EnrollmentStatus.PENDING_PAYMENT) {
       throw new BadRequestException(
         `No se puede activar: estado actual es ${enrollment.status}`,
       )
     }
 
-    if (enrollment.course.currentStudents >= enrollment.course.maxStudents) {
-      this.logger.warn(`ALERTA: Sobreventa de curso. El curso ${enrollment.courseId} excedió su cupo al activarse la inscripción ${enrollmentId} vía pago rezagado.`)
-    }
-
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.enrollment.update({
-        where: { id: enrollmentId },
+    // Usar updateMany con WHERE condicional para garantizar atomicidad.
+    // Si otra transacción ya activó este enrollment, count === 0 y no incrementamos.
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updateResult = await tx.enrollment.updateMany({
+        where: {
+          id: enrollmentId,
+          status: EnrollmentStatus.PENDING_PAYMENT, // ← solo actualiza si aún está pendiente
+        },
         data: {
           status:          EnrollmentStatus.ACTIVE,
           enrolledAt:      new Date(),
           isPreEnrollment: false,
         },
-      }),
-      this.prisma.course.update({
+      })
+
+      // Si count === 0, otro proceso ya lo activó — salir sin incrementar cupo
+      if (updateResult.count === 0) {
+        this.logger.warn(`Webhook duplicado ignorado para enrollment: ${enrollmentId}`)
+        return null
+      }
+
+      await tx.course.update({
         where: { id: enrollment.courseId },
         data:  { currentStudents: { increment: 1 } },
-      }),
-      this.prisma.auditLog.create({
+      })
+
+      await tx.auditLog.create({
         data: {
           action:   'ENROLLMENT_ACTIVATED',
           entity:   'Enrollment',
           entityId: enrollmentId,
         },
-      }),
-    ])
+      })
 
-    // Email de confirmación — no bloquea si falla
-    const user    = enrollment.student.user as { firstName: string, lastName: string, email: string }
-    const course  = enrollment.course as { level: string, language: { name: string } }
-    const name    = `${user.firstName} ${user.lastName}`
-    const cName   = `${course.language.name} ${course.level}`
+      return await tx.enrollment.findUnique({ where: { id: enrollmentId } })
+    })
 
-    await this.notifications.sendEnrollmentConfirmation(user.email, name, cName)
+    if (!result) return enrollment // ya estaba activa — retornar estado actual
+
+    // Email de confirmación (fuera de la transacción — no bloquea si falla)
+    const user   = enrollment.student.user as { firstName: string; lastName: string; email: string }
+    const course = enrollment.course      as { level: string; language: { name: string } }
+    await this.notifications.sendEnrollmentConfirmation(
+      user.email,
+      `${user.firstName} ${user.lastName}`,
+      `${course.language.name} ${course.level}`,
+    )
 
     this.logger.log(`Inscripción activada: ${enrollmentId}`)
-    return updated
+    return result
   }
 
   // ══════════════════════════════════════════════════════════════════════════

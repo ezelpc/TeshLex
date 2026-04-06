@@ -39,8 +39,14 @@ export class EnrollmentsController {
     @Query('studentId') studentId?: string,
     @Query('courseId')  courseId?:  string,
     @Query('status')    status?:    EnrollmentStatus,
+    @Query('page')      page?:      string,
+    @Query('limit')     limit?:     string,
   ) {
-    return this.enrollmentsService.findAll({ studentId, courseId, status })
+    return this.enrollmentsService.findAll(
+      { studentId, courseId, status },
+      page  ? parseInt(page,  10) : 1,
+      limit ? parseInt(limit, 10) : 50,
+    )
   }
 
   // ── GET /api/enrollments/my — Alumno ─────────────────────────────────────

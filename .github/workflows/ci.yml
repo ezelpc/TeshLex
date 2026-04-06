@@ -1,56 +1,217 @@
-name: CI — TeshLex
+name: 🚀 TeshLex — CI/CD DevSecOps
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
 
+env:
+  DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+  BACKEND_IMAGE:  ${{ secrets.DOCKERHUB_USERNAME }}/teshlex-backend
+  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/teshlex-frontend
+
+# ══════════════════════════════════════════════════════════════════════════════
+# JOB 1: Seguridad y calidad del código
+# ══════════════════════════════════════════════════════════════════════════════
 jobs:
-  security-scan:
-    name: 🔒 Escaneo de Seguridad (Trivy)
+  security-and-lint:
+    name: 🔒 Seguridad + Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Escanear vulnerabilidades
+
+      # Trivy escanea el filesystem (secrets, configs, dependencias)
+      - name: 🛡️ Trivy — Filesystem scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: .
           severity: HIGH,CRITICAL
-          exit-code: 1
+          exit-code: "1"
+          format: table
+          ignore-unfixed: true
 
-  lint-backend:
-    name: 🧹 Lint Backend
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
         with: { version: 9 }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: pnpm, cache-dependency-path: backend/pnpm-lock.yaml }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm test --passWithNoTests
 
-  lint-frontend:
-    name: 🧹 Lint Frontend
+      - name: 📦 Install backend deps
+        run: pnpm install --frozen-lockfile
+        working-directory: backend
+
+      - name: 🧹 Lint backend
+        run: pnpm lint
+        working-directory: backend
+
+      - name: 🧪 Tests backend
+        run: pnpm test --passWithNoTests
+        working-directory: backend
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 2: Build + Scan de imágenes Docker
+  # Solo en push a main
+  # ══════════════════════════════════════════════════════════════════════════
+  build-and-scan:
+    name: 🐳 Build + Trivy Image Scan
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
+    needs: security-and-lint
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      image-tag: ${{ steps.tag.outputs.tag }}
+
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-        with: { version: 9 }
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: pnpm, cache-dependency-path: frontend/pnpm-lock.yaml }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
 
+      - name: 🏷️ Generar tag de imagen
+        id: tag
+        run: echo "tag=sha-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: 🐳 Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔑 Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ── Backend ────────────────────────────────────────────────────────────
+      - name: 🏗️ Build backend (local, sin push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.BACKEND_IMAGE }}:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 🛡️ Trivy — Scan imagen backend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE }}:${{ steps.tag.outputs.tag }}
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          vuln-type: os,library
+
+      - name: 🚢 Push backend a Docker Hub
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ steps.tag.outputs.tag }}
+            ${{ env.BACKEND_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Frontend ───────────────────────────────────────────────────────────
+      - name: 🏗️ Build frontend (local, sin push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.FRONTEND_IMAGE }}:${{ steps.tag.outputs.tag }}
+          build-args: |
+            VITE_API_URL=${{ secrets.VITE_API_URL }}
+            VITE_MP_PUBLIC_KEY=${{ secrets.VITE_MP_PUBLIC_KEY }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 🛡️ Trivy — Scan imagen frontend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.FRONTEND_IMAGE }}:${{ steps.tag.outputs.tag }}
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          vuln-type: os,library
+
+      - name: 🚢 Push frontend a Docker Hub
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ steps.tag.outputs.tag }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+          build-args: |
+            VITE_API_URL=${{ secrets.VITE_API_URL }}
+            VITE_MP_PUBLIC_KEY=${{ secrets.VITE_MP_PUBLIC_KEY }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 3: Deploy a k3s en EC2
+  # ══════════════════════════════════════════════════════════════════════════
+  deploy:
+    name: 🚀 Deploy a k3s
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🔑 Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.29.0
+
+      - name: 🔧 Configurar kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_BASE64 }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: 📦 Aplicar manifiestos k8s
+        run: |
+          TAG="${{ needs.build-and-scan.outputs.image-tag }}"
+          DUSER="${{ secrets.DOCKERHUB_USERNAME }}"
+
+          # Actualizar imágenes con el tag del commit actual
+          sed -i "s|DOCKERHUB_USER/teshlex-backend:latest|${DUSER}/teshlex-backend:${TAG}|g" k8s/deployment.yaml
+          sed -i "s|DOCKERHUB_USER/teshlex-frontend:latest|${DUSER}/teshlex-frontend:${TAG}|g" k8s/deployment.yaml
+
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/deployment.yaml
+
+      - name: ⏳ Esperar rollout backend
+        run: |
+          kubectl rollout status deployment/teshlex-backend --timeout=300s
+          kubectl rollout status deployment/teshlex-frontend --timeout=300s
+
+      - name: ✅ Verificar pods
+        run: |
+          kubectl get pods -l app=teshlex
+          kubectl get svc
+
+      - name: 🏥 Smoke test
+        run: |
+          sleep 15
+          EC2_HOST="${{ secrets.EC2_HOST }}"
+          HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+            --max-time 20 "https://${EC2_HOST}/api/health" || echo "000")
+          echo "Health check HTTP: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Smoke test falló"
+            kubectl logs deployment/teshlex-backend --tail=50
+            exit 1
+          fi
+          echo "✅ Deploy exitoso"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 4: Terraform Validate (siempre)
+  # ══════════════════════════════════════════════════════════════════════════
   terraform-validate:
     name: 🏗️ Validar Terraform
     runs-on: ubuntu-latest

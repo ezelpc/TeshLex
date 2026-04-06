@@ -3,6 +3,7 @@ import {
   Controller, Get, Post, Param, Body, Query, Headers,
   UseGuards, HttpCode, HttpStatus, Req, UnauthorizedException
 } from '@nestjs/common'
+import type { Request } from 'express'
 import * as crypto from 'crypto'
 import {
   ApiTags, ApiOperation, ApiBearerAuth,
@@ -51,12 +52,15 @@ export class PaymentsController {
   })
   async webhook(
     @Body() body: any,
+    @Req() req: Request,
     @Headers('x-signature') xSignature: string,
     @Headers('x-request-id') xRequestId: string,
-    @Query('data.id') dataId: string,
   ) {
+    // NestJS no resuelve puntos en @Query — usar req.query directamente
+    const dataId = req.query['data.id'] as string | undefined
+
     if (!xSignature || !xRequestId || !dataId) {
-      throw new UnauthorizedException('Request Headers incompletos para webhook')
+      throw new UnauthorizedException('Firma de webhook incompleta o ausente')
     }
 
     // 1. Extraer timestamp(ts) y hash(v1)
@@ -70,7 +74,7 @@ export class PaymentsController {
 
     // 2. Hash HMAC-SHA256 Manifest
     const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts}`
-    const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET || ''
+    const secret = this.paymentsService.getWebhookSecret()
     const expectedHash = crypto.createHmac('sha256', secret).update(manifest).digest('hex')
 
     if (hash !== expectedHash) {
@@ -121,8 +125,8 @@ export class PaymentsController {
   @ApiBearerAuth('JWT-Auth')
   @ApiOperation({ summary: 'Detalle de un pago' })
   @ApiParam({ name: 'id', description: 'UUID del pago' })
-  findOne(@Param('id') id: string) {
-    return this.paymentsService.findOne(id)
+  findOne(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.paymentsService.findOne(id, user)
   }
 
   // ── POST /api/payments/:id/refund — Admin procesa un reembolso ──────────

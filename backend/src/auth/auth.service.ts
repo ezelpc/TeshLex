@@ -8,9 +8,11 @@ import {
 import { JwtService }    from '@nestjs/jwt'
 import { ConfigService } from '@nestjs/config'
 import { PrismaService } from '../prisma/prisma.service'
+import { JwtBlacklistService } from './jwt-blacklist.service'
 import { Role }          from '@prisma/client'
 import bcrypt            from 'bcryptjs'
 import { randomUUID }    from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 
 // ── Tipos exportados ──────────────────────────────────────────────────────────
 
@@ -36,6 +38,7 @@ export class AuthService {
     private readonly prisma:  PrismaService,
     private readonly jwt:     JwtService,
     private readonly config:  ConfigService,
+    private readonly blacklist: JwtBlacklistService,
   ) {}
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -48,7 +51,6 @@ export class AuthService {
     ipAddress?: string,
     userAgent?: string,
   ) {
-    this.logger.log(`LOGIN DEBUG: Starting login sequence for ${email}`);
     // 1. Buscar usuario — normalize email
     const user = await this.prisma.user.findUnique({
       where:   { email: email.toLowerCase().trim() },
@@ -61,12 +63,10 @@ export class AuthService {
         },
       },
     })
-    this.logger.log(`LOGIN DEBUG: findUnique finished`);
 
     // Mismo mensaje para "no existe" y "contraseña incorrecta"
     // para evitar enumeración de usuarios
     if (!user) {
-      this.logger.log(`LOGIN DEBUG: User not found`);
       throw new UnauthorizedException('Credenciales incorrectas')
     }
 
@@ -86,12 +86,16 @@ export class AuthService {
     // 3. Generar access token + refresh token
     const tokens = await this.generateTokens(user.id, user.email, user.role)
 
+    // 🔐 Encriptar refresh token antes de guardar en BD
+    // Hash: SHA256(token + secret) — no reversible, previene compromise de DB
+    const tokenHash = this.hashToken(tokens.refreshToken)
+
     // 4. Persistir refresh token + actualizar lastLoginAt (paralelo)
     await Promise.all([
       this.prisma.refreshToken.create({
         data: {
           userId:    user.id,
-          token:     tokens.refreshToken,
+          token:     tokenHash,  // 🔐 Hash, no plain text
           expiresAt: new Date(Date.now() + this.refreshTtlMs()),
           ipAddress,
           userAgent,
@@ -146,8 +150,11 @@ export class AuthService {
   // POST /api/auth/refresh
   // ══════════════════════════════════════════════════════════════════════════
   async refresh(refreshToken: string): Promise<AuthTokens> {
+    // 🔐 Hash incoming token para comparar con BD
+    const tokenHash = this.hashToken(refreshToken)
+    
     const record = await this.prisma.refreshToken.findUnique({
-      where:   { token: refreshToken },
+      where:   { token: tokenHash },  // 🔐 Buscar por hash
       include: { user: true },
     })
 
@@ -169,6 +176,8 @@ export class AuthService {
       record.user.role,
     )
 
+    const newTokenHash = this.hashToken(newTokens.refreshToken)
+
     await Promise.all([
       this.prisma.refreshToken.update({
         where: { id: record.id },
@@ -177,7 +186,7 @@ export class AuthService {
       this.prisma.refreshToken.create({
         data: {
           userId:    record.user.id,
-          token:     newTokens.refreshToken,
+          token:     newTokenHash,  // 🔐 Hash también
           expiresAt: new Date(Date.now() + this.refreshTtlMs()),
           ipAddress: record.ipAddress,
           userAgent: record.userAgent,
@@ -198,9 +207,11 @@ export class AuthService {
     ipAddress?:    string,
   ) {
     if (refreshToken) {
+      // 🔐 Hash incoming token para buscar
+      const tokenHash = this.hashToken(refreshToken)
       // Revocar solo la sesión actual
       await this.prisma.refreshToken.updateMany({
-        where: { userId, token: refreshToken, revokedAt: null },
+        where: { userId, token: tokenHash, revokedAt: null },
         data:  { revokedAt: new Date() },
       })
     } else {
@@ -376,5 +387,14 @@ export class AuthService {
     const raw  = this.config.get<string>('JWT_REFRESH_EXPIRES_IN', '7d')
     const days = parseInt(raw.replace('d', ''), 10)
     return (isNaN(days) ? 7 : days) * 24 * 60 * 60 * 1000
+  }
+
+  /**
+   * 🔐 Hashear token JWT para almacenamiento seguro en BD
+   * SHA256(token + SECRET) — no reversible, previene acceso a BD
+   */
+  private hashToken(token: string): string {
+    const secret = this.config.get<string>('TOKEN_HASH_SECRET', 'default-secret')
+    return createHmac('sha256', secret).update(token).digest('hex')
   }
 }

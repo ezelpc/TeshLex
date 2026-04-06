@@ -1,0 +1,119 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: teshlex-backend-netpol
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: teshlex
+      tier: backend
+  # INGRESS: Solo acceptar tráfico de frontend + Ingress controller
+  ingress:
+    # Frontend pod → Backend pod
+    - from:
+        - podSelector:
+            matchLabels:
+              app: teshlex
+              tier: frontend
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Ingress controller (nginx) → Backend
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+  # EGRESS: Permitir a DNS + DB externo + internet outbound
+  egress:
+    # DNS (CoreDNS en k3s)
+    - to:
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    # Database externo (opcional, si no está en cluster)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: databases # O usar CIDR si está en AWS/GCP
+      ports:
+        - protocol: TCP
+          port: 5432 # PostgreSQL
+    # Permitir salida a internet (para webhooks MercadoPago, etc)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: teshlex-frontend-netpol
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: teshlex
+      tier: frontend
+  # INGRESS: Solo desde Ingress controller
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 5000
+  # EGRESS: Frontend puede conectar a backend + internet (para APIs externas desde browser)
+  egress:
+    # Backend API
+    - to:
+        - podSelector:
+            matchLabels:
+              app: teshlex
+              tier: backend
+      ports:
+        - protocol: TCP
+          port: 3000
+    # DNS
+    - to:
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    # HTTPS a internet (APIs externas)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: default
+spec:
+  podSelector: {}
+  # 🔐 Denegar todo tráfico ingress por defecto
+  policyTypes:
+    - Ingress

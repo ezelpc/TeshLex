@@ -19,12 +19,14 @@ const ALUMNO_TABS = [
 
 const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
+import type { EnrollmentDTO, PaymentDTO } from '../../shared/types'
+
 export default function DashboardAlumno() {
   const { user } = useRequireRole('STUDENT')
   const [activeTab, setActiveTab] = useState('home')
 
-  const [enrollments, setEnrollments] = useState<any[]>([])
-  const [payments,    setPayments]    = useState<any[]>([])
+  const [enrollments, setEnrollments] = useState<EnrollmentDTO[]>([])
+  const [payments,    setPayments]    = useState<PaymentDTO[]>([])
   const [loading,     setLoading]     = useState(true)
   const [error,       setError]       = useState('')
 
@@ -37,10 +39,11 @@ export default function DashboardAlumno() {
           api.enrollments.getMy(),
           api.payments.getMy(),
         ])
-        setEnrollments(Array.isArray(enrollData) ? enrollData : (enrollData as any)?.data || [])
-        setPayments(Array.isArray(payData) ? payData : (payData as any)?.data || [])
-      } catch (err: any) {
-        setError(err.message || 'Error al cargar datos')
+        setEnrollments(Array.isArray(enrollData) ? enrollData : (enrollData as any).data || [])
+        setPayments(Array.isArray(payData) ? payData : (payData as any).data || [])
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Error al cargar datos'
+        setError(message)
       } finally {
         setLoading(false)
       }
@@ -53,14 +56,14 @@ export default function DashboardAlumno() {
   if (!user) return null
   if (loading) return <PageLoader message="Cargando tu dashboard..." />
 
-  const active        = Array.isArray(enrollments) ? enrollments.find((e: any) => e.status === 'ACTIVE') : null
-  const pendingPay    = Array.isArray(enrollments) ? enrollments.find((e: any) => e.status === 'PENDING_PAYMENT') : null
-  const history       = Array.isArray(enrollments) ? enrollments.filter((e: any) => ['COMPLETED', 'DROPPED', 'EXPELLED'].includes(e.status)) : []
+  const active        = Array.isArray(enrollments) ? enrollments.find(e => e.status === 'ACTIVE') : null
+  const pendingPay    = Array.isArray(enrollments) ? enrollments.find(e => e.status === 'PENDING_PAYMENT') : null
+  const history       = Array.isArray(enrollments) ? enrollments.filter(e => ['COMPLETED', 'DROPPED', 'EXPELLED'].includes(e.status)) : []
   
   const completedLvls = Array.isArray(enrollments) 
     ? enrollments
-        .filter((e: any) => e.status === 'COMPLETED' && e.course?.languageId === active?.course?.languageId)
-        .map((e: any) => e.course?.level)
+        .filter(e => e.status === 'COMPLETED' && e.course?.languageId === active?.course?.languageId)
+        .map(e => e.course?.level)
     : []
 
   return (
@@ -165,7 +168,7 @@ export default function DashboardAlumno() {
                    Calendario de Sesiones
                 </h3>
                 <WeeklyCalendar 
-                  courses={[active.course].map(c => ({
+                  courses={[active.course as any].map(c => ({
                     ...c,
                     color: c?.language?.name?.toLowerCase().includes('inglés') ? 'bg-indigo-100 border-indigo-300 text-indigo-800' : 
                            c?.language?.name?.toLowerCase().includes('francés') ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-green-100 border-green-300 text-green-800'
@@ -236,8 +239,8 @@ export default function DashboardAlumno() {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4">
-                {history.map((e: any) => {
-                  const boleta   = e.documents?.find((d: any) => d.type === 'GRADE_REPORT' && d.status === 'RELEASED')
+                {history.map((e) => {
+                  const boleta   = e.documents?.find((d) => d.type === 'GRADE_REPORT' && d.status === 'RELEASED')
                   const approved = e.finalGrade != null && e.finalGrade >= 7
                   return (
                     <div key={e.id} className="p-6 border border-gray-100 rounded-xl hover:bg-gray-50 transition-all flex items-center justify-between">
@@ -283,7 +286,7 @@ export default function DashboardAlumno() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {payments.map((p: any) => (
+                    {payments.map((p) => (
                       <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
                         <td className="p-4 font-bold text-gray-700">
                           {p.enrollment?.course ? `${p.enrollment.course.language?.name} ${p.enrollment.course.level}` : p.description}
@@ -308,7 +311,7 @@ export default function DashboardAlumno() {
       </div>
 
       {/* Hidden component for formal PDF generation */}
-      <PrintableSchedule enrollment={active} />
+      <PrintableSchedule enrollment={active as any} />
     </DashboardLayout>
   )
 }

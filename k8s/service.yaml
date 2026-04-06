@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: teshlex-backend-svc
+  namespace: default
+spec:
+  type: NodePort
+  selector:
+    app: teshlex
+    tier: backend
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30300   # Nginx externo proxy → localhost:30300
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: teshlex-frontend-svc
+  namespace: default
+spec:
+  type: NodePort
+  selector:
+    app: teshlex
+    tier: frontend
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+      nodePort: 30500   # Nginx externo proxy → localhost:30500

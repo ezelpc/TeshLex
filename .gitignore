@@ -10,10 +10,16 @@ build/
 .env.local
 .env.*.local
 
-# Logs
+# Logs — NUNCA subir al repo
 *.log
 npm-debug.log*
 pnpm-debug.log*
+backend/*.log
+backend/server.log
+backend/debug.log
+
+# Scripts de QA con datos sensibles
+backend/qa_*.js
 
 # Terraform
 **/.terraform/

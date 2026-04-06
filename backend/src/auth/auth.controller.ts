@@ -24,9 +24,19 @@ export class AuthController {
 
   private setCookies(res: Response, accessToken: string, refreshToken: string) {
     const isProd = process.env.NODE_ENV === 'production'
-    const opts = { httpOnly: true, secure: isProd, sameSite: 'strict' as const, path: '/' }
-    res.cookie('accessToken', accessToken, { ...opts, maxAge: 15 * 60 * 1000 })
-    res.cookie('refreshToken', refreshToken, { ...opts, maxAge: 7 * 24 * 60 * 60 * 1000 })
+    const baseOpts = { httpOnly: true, secure: isProd, sameSite: 'strict' as const }
+    // accessToken va con cada request a /api
+    res.cookie('accessToken', accessToken, {
+      ...baseOpts,
+      path: '/api',
+      maxAge: 15 * 60 * 1000,
+    })
+    // refreshToken SOLO va a /api/auth/refresh — reduce superficie de ataque
+    res.cookie('refreshToken', refreshToken, {
+      ...baseOpts,
+      path: '/api/auth/refresh',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    })
   }
 
   @Post('login')

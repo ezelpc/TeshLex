@@ -6,6 +6,10 @@ import { ConfigService }      from '@nestjs/config'
 import { PrismaService }      from '../../prisma/prisma.service'
 import type { JwtPayload }    from '../auth.service'
 
+// Cache in-memory con TTL de 60 segundos para mitigar carga en BD
+const userCache = new Map<string, { data: any; expiresAt: number }>()
+const CACHE_TTL_MS = 60_000 // 60 segundos
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
@@ -32,6 +36,15 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   async validate(payload: JwtPayload) {
+    const cacheKey = payload.sub
+    const now      = Date.now()
+    const cached   = userCache.get(cacheKey)
+
+    // Retornar del caché si no ha expirado
+    if (cached && cached.expiresAt > now) {
+      return cached.data
+    }
+
     const user = await this.prisma.user.findUnique({
       where:   { id: payload.sub },
       include: {
@@ -41,10 +54,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     })
 
     if (!user || !user.isActive) {
+      userCache.delete(cacheKey) // limpiar caché si el usuario fue desactivado
       throw new UnauthorizedException('Usuario no encontrado o desactivado')
     }
 
-    return {
+    const userData = {
       id:               user.id,
       email:            user.email,
       role:             user.role,
@@ -54,5 +68,17 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       studentProfileId: user.studentProfile?.id ?? null,
       teacherProfileId: user.teacherProfile?.id ?? null,
     }
+
+    // Guardar en caché con TTL
+    userCache.set(cacheKey, { data: userData, expiresAt: now + CACHE_TTL_MS })
+
+    // Limpieza periódica del caché (evitar memory leak)
+    if (userCache.size > 1000) {
+      for (const [key, val] of userCache.entries()) {
+        if (val.expiresAt <= now) userCache.delete(key)
+      }
+    }
+
+    return userData
   }
 }

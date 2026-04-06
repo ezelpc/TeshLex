@@ -4,6 +4,11 @@ import { useState, useEffect } from 'react'
 import { api, ApiError }        from '../../lib/api'
 import { useRequireRole }       from '../../hooks/useRequireRole'
 import { PageLoader, ButtonSpinner } from '../../components/LoadingSpinner'
+import type { 
+  EnrollmentDTO, 
+  PaymentDTO, 
+  AcademicCycle
+} from '../../shared/types'
 import { ErrorBanner }          from '../../components/ErrorBanner'
 import { DashboardLayout }      from '../../components/DashboardLayout'
 
@@ -35,9 +40,20 @@ export default function DashboardAdmin() {
   const [activeTab, setActiveTab] = useState('overview')
 
   // ── KPIs ──
-  const [kpis,    setKpis]    = useState<any>(null)
-  const [stats,   setStats]   = useState<any>(null)
+  interface DashboardKPIs {
+    activeEnrollments:     number
+    dropsThisMonth:        number
+    pendingDocuments:      number
+    revenueThisMonth:      number
+    revenueLastMonth:      number
+    enrollmentsByLevel:    { level: string; count: number }[]
+    enrollmentsByLanguage: { language: string; count: number }[]
+  }
+  const [kpis,    setKpis]    = useState<DashboardKPIs | null>(null)
+  const [stats,   setStats]   = useState<{ totalRevenue: number } | null>(null)
   const [kpiLoad, setKpiLoad] = useState(true)
+
+  // ── Pending Documents ──
 
   // ── Pending Documents ──
   const [docs,    setDocs]    = useState<any[]>([])
@@ -49,14 +65,14 @@ export default function DashboardAdmin() {
   const [commLoad,     setCommLoad]     = useState(true)
   const [markingRead,  setMarkingRead]  = useState<string | null>(null)
 
+  // ── Ciclo Activo ──
+  const [activeCycle, setActiveCycle] = useState<AcademicCycle | null>(null)
+  const [cycleSaving, setCycleSaving] = useState(false)
+
   // ── Language form ──
   const [langName, setLangName] = useState('')
   const [langCode, setLangCode] = useState('')
   const [langLoading, setLangLoading] = useState(false)
-
-  // ── Enrollment Windows ──
-  const [activeCycle, setActiveCycle] = useState<any>(null)
-  const [cycleSaving, setCycleSaving] = useState(false)
 
   // ── Teacher form ──
   const [teacher, setTeacher] = useState({
@@ -72,18 +88,18 @@ export default function DashboardAdmin() {
     if (!user) return
     const loadAll = async () => {
       try {
-        const [kpiData, docData, commData, statsData, activeCycleData] = await Promise.all([
+        const [kpiData, docData, commData, cycle, sData] = await Promise.all([
           api.reports.getDashboard(),
           api.reports.getPendingDocuments(),
           api.reports.getTeacherComments(true),
+          api.courses.getActiveCycle(),
           api.payments.getStats(),
-          api.courses.getActiveCycle()
         ])
         setKpis(kpiData)
         setDocs(docData)
         setComments(commData)
-        setStats(statsData)
-        setActiveCycle(activeCycleData)
+        setActiveCycle(cycle)
+        setStats(sData)
       } catch (err) {
         if (err instanceof ApiError) setError(err.message)
       } finally {

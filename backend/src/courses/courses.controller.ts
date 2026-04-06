@@ -4,6 +4,7 @@ import {
   Body, Param, Query, UseGuards,
   HttpCode, HttpStatus,
 } from '@nestjs/common'
+import { SkipThrottle } from '@nestjs/throttler'
 import {
   ApiTags, ApiOperation, ApiBearerAuth,
   ApiQuery, ApiParam,
@@ -29,6 +30,7 @@ export class CoursesController {
   // ════════════════════════════════════════════════════════════════════════
 
   // GET /api/courses — PÚBLICO (landing, registro)
+  @SkipThrottle()
   @Get()
   @ApiOperation({ summary: 'Listar cursos con filtros opcionales (público)' })
   @ApiQuery({ name: 'languageId', required: false })
@@ -49,6 +51,7 @@ export class CoursesController {
   }
 
   // GET /api/courses/:id — PÚBLICO
+  @SkipThrottle()
   @Get(':id')
   @ApiOperation({ summary: 'Obtener detalle completo de un curso (público)' })
   @ApiParam({ name: 'id', description: 'UUID del curso' })
@@ -128,6 +131,7 @@ export class CoursesController {
   // ════════════════════════════════════════════════════════════════════════
 
   // GET /api/courses/languages — PÚBLICO
+  @SkipThrottle()
   @Get('languages/list')
   @ApiOperation({ summary: 'Listar idiomas disponibles (público)' })
   getLanguages() {
@@ -185,6 +189,7 @@ export class CoursesController {
   }
 
   // GET /api/courses/cycles/active
+  @SkipThrottle()
   @Get('cycles/active')
   @ApiOperation({ summary: 'Obtener el ciclo escolar activo (público)' })
   getActiveCycle() {

@@ -17,6 +17,7 @@ export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name)
   private readonly mpClient: MercadoPagoConfig
   private readonly frontendUrl: string
+  private readonly webhookSecret: string
 
   constructor(
     private readonly prisma:        PrismaService,
@@ -24,11 +25,14 @@ export class PaymentsService {
     private readonly notifications: NotificationsService,
     private readonly enrollments:   EnrollmentsService,
   ) {
-    const accessToken  = this.config.get<string>('MERCADOPAGO_ACCESS_TOKEN', '')
-    this.frontendUrl   = this.config.get<string>('FRONTEND_URL', 'http://localhost:5173')
-    
-    // Inicializar SDK de MercadoPago
+    // getOrThrow: lanza en startup si falta la variable, evita fallos silenciosos
+    const accessToken = this.config.getOrThrow<string>('MERCADOPAGO_ACCESS_TOKEN')
+    this.webhookSecret = this.config.getOrThrow<string>('MERCADOPAGO_WEBHOOK_SECRET')
+    this.frontendUrl  = this.config.get<string>('FRONTEND_URL', 'http://localhost:5173')
+
     this.mpClient = new MercadoPagoConfig({ accessToken, options: { timeout: 10000 } })
+
+    this.logger.log(`MercadoPago inicializado (token: ...${accessToken.slice(-6)})`)
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -82,15 +86,28 @@ export class PaymentsService {
     if (isNaN(amount) || amount <= 0) amount = 1500
 
 
-    // Check if we already have a pending Payment for this enrollment
-    let payment = await this.prisma.payment.findFirst({
-      where: { enrollmentId, status: PaymentStatus.PENDING },
+    // Verificar si ya existe una preference válida para este enrollment
+    const existingPayment = await this.prisma.payment.findFirst({
+      where: {
+        enrollmentId,
+        status: PaymentStatus.PENDING,
+        mpPreferenceId: { not: null },
+      },
+      orderBy: { createdAt: 'desc' },
     })
+
+    if (existingPayment?.mpPreferenceId) {
+      this.logger.log(`Reutilizando preference existente: ${existingPayment.mpPreferenceId}`)
+      return {
+        preferenceId: existingPayment.mpPreferenceId,
+        // initPoint no se puede recuperar sin llamar a MP — el frontend ya lo tiene o usa preferenceId
+      }
+    }
 
     let preferenceId: string
     let initPoint: string | undefined
 
-    // Always create a fresh preference to ensure updated urls/data or prices
+    // Solo crear nueva preference si no existe una pending
     const preferenceClient = new Preference(this.mpClient)
     
     const backendUrl = this.config.get('BACKEND_URL', 'http://localhost:3000') // En PROD debe ser el dominio público
@@ -109,12 +126,15 @@ export class PaymentsService {
           ],
           payer: {
             // Email genérico en desarrollo, email real del estudiante en producción
-            email: process.env.NODE_ENV === 'production' ? user.email : (process.env.MERCADOPAGO_TEST_EMAIL || 'test_user_1234@testuser.com'),
+          email: this.config.get('NODE_ENV') === 'production'
+            ? user.email
+            : (this.config.get('MERCADOPAGO_TEST_EMAIL') || 'test_user_1234@testuser.com'),
           },
           back_urls: {
             success: `${this.frontendUrl}/pago/exitoso`,
             pending: `${this.frontendUrl}/pago/pendiente`,
             failure: `${this.frontendUrl}/pago/error`,
+            // @ts-ignore - Algunas versiones del SDK no tienen success/pending/failure en el tipo
           },
           auto_return: 'approved',
           notification_url: `${backendUrl}/api/payments/webhook`,
@@ -133,9 +153,9 @@ export class PaymentsService {
 
     // Guardar en BD
     try {
-      if (payment) {
+      if (existingPayment) {
         await this.prisma.payment.update({
-          where: { id: payment.id },
+          where: { id: existingPayment.id },
           data: {
             mpPreferenceId: preferenceId,
             mpExternalRef:  enrollmentId, 
@@ -279,7 +299,7 @@ export class PaymentsService {
     }
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, requestingUser?: any) {
     const payment = await this.prisma.payment.findUnique({
       where:   { id },
       include: {
@@ -292,6 +312,16 @@ export class PaymentsService {
       },
     })
     if (!payment) throw new NotFoundException('Pago no encontrado')
+
+    // Ownership check — solo el dueño o admin/superadmin puede ver el pago
+    if (requestingUser) {
+      const isAdmin = ['ADMIN', 'SUPERADMIN'].includes(requestingUser.role)
+      const isOwner = payment.studentId === requestingUser.studentProfileId
+      if (!isAdmin && !isOwner) {
+        throw new NotFoundException('Pago no encontrado')
+      }
+    }
+
     return payment
   }
 
@@ -370,5 +400,9 @@ export class PaymentsService {
 
     this.logger.log(`Reembolso MercadoPago procesado para pago ${id}`)
     return updated
+  }
+
+  getWebhookSecret() {
+    return this.webhookSecret
   }
 }

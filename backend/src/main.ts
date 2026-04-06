@@ -24,12 +24,53 @@ async function bootstrap() {
   app.setGlobalPrefix('api')
 
 
-  app.use(helmet({ crossOriginEmbedderPolicy: false }))
+  app.use(helmet({
+    crossOriginEmbedderPolicy: false,
+    // Strict-Transport-Security: HTTPS only por 1 año + subdomains
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    // Content-Security-Policy estricta
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'nonce-{{NONCE}}'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        fontSrc: ["'self'"],
+        connectSrc: ["'self'", process.env.FRONTEND_URL ?? 'http://localhost:5173'],
+        frameSrc: ["'none'"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : undefined,
+      },
+    },
+    // X-Frame-Options: Deny clickjacking
+    frameguard: { action: 'deny' },
+    // X-Content-Type-Options: nosniff
+    noSniff: true,
+    // X-XSS-Protection (legacy pero no duele)
+    xssFilter: true,
+    // Referrer-Policy
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  }))
+  // CORS — Validar origen con URL parsing (prevenir bypass)
+  const corsOrigins = origins.split(',').map((o: string) => o.trim())
   app.enableCors({
-    origin:         origins.split(',').map((o: string) => o.trim()),
+    origin: (requestOrigin: string | undefined, callback) => {
+      if (!requestOrigin || corsOrigins.includes(requestOrigin)) {
+        callback(null, true)
+      } else {
+        // Log sospechoso
+        logger.warn(`❌ CORS REJECT: ${requestOrigin}`)
+        callback(new Error('Not allowed by CORS'), false)
+      }
+    },
     methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials:    true,
+    maxAge:         3600,  // Preflight cache
   })
 
   app.use(compression())

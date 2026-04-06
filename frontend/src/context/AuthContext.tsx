@@ -22,29 +22,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setLoading] = useState(true)
 
   useEffect(() => {
-    console.log('[Auth] Iniciando verificación de sesión...')
-    
-    // Safety timeout: force loading false after 15s to avoid infinite spinner
-    const timer = setTimeout(() => {
-      if (isLoading) {
-        console.warn('[Auth] Timeout de seguridad alcanzado. Forzando fin de carga.')
+    // Necesitamos bypass del auto-refresh para evitar loop en /login
+    // apiFetch en api.auth.me() hace refresh si hay 401 y redirige.
+    // Usamos fetch directo con credentials para la verificación inicial de sesión.
+    const checkSession = async () => {
+      try {
+        const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api'
+        const res = await fetch(`${API_BASE}/auth/me`, {
+          credentials: 'include',
+          signal: AbortSignal.timeout(10000),
+        })
+
+        if (!res.ok) {
+          // 401 en verificación inicial = no hay sesión, no intentar refresh
+          setUser(null)
+          return
+        }
+
+        const json = await res.json()
+        setUser(json.data ?? json)
+      } catch (err) {
+        console.error('[Auth] Error en verificación inicial:', err)
+        setUser(null)
+      } finally {
         setLoading(false)
       }
-    }, 15000)
+    }
 
-    api.auth.me()
-      .then(fetchedUser => {
-        console.log('[Auth] Usuario recuperado:', fetchedUser?.email || 'ninguno')
-        setUser(fetchedUser)
-      })
-      .catch((err) => {
-        console.error('[Auth] Error recuperando sesión:', err)
-        setUser(null)
-      })
-      .finally(() => {
-        setLoading(false)
-        clearTimeout(timer)
-      })
+    checkSession()
   }, [])
 
   const logout = useCallback(async () => {
